@@ -1,0 +1,127 @@
+# Throwaway spike config. Two listeners: 18081 asks the check over HTTP, 18083 over gRPC.
+admin:
+  address: { socket_address: { address: 127.0.0.1, port_value: 19901 } }
+static_resources:
+  listeners:
+  - name: http_mode
+    address: { socket_address: { address: 127.0.0.1, port_value: 18081 } }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: http_mode
+          # the check and the proxy must see the same path: normalise before matching
+          normalize_path: true
+          merge_slashes: true
+          path_with_escaped_slashes_action: REJECT_REQUEST
+          route_config:
+            name: r
+            virtual_hosts:
+            - name: site
+              domains: ["*"]
+              routes:
+              - match: { prefix: "/_session/" }
+                route: { cluster: session_http }
+                typed_per_filter_config:
+                  envoy.filters.http.ext_authz:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                    disabled: true
+              - match: { prefix: "/" }
+                route: { cluster: upstream }
+          http_filters:
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              transport_api_version: V3
+              failure_mode_allow: false
+              status_on_error: { code: ServiceUnavailable }
+              # which request headers the check may see (the check never sees a body)
+              allowed_headers:
+                patterns:
+                - { exact: cookie }
+                - { exact: accept }
+                - { exact: sec-fetch-mode }
+                - { exact: sec-fetch-site }
+                - { exact: origin }
+              http_service:
+                server_uri: { uri: "http://127.0.0.1:18090", cluster: session_http, timeout: 2s }
+                path_prefix: /check
+                authorization_response:
+                  allowed_upstream_headers:
+                    patterns:
+                    - { prefix: x-session- }
+                    - { exact: cookie }
+                    - { exact: authorization }
+                  allowed_client_headers:
+                    patterns:
+                    - { exact: location }
+                    - { exact: content-type }
+                    - { exact: www-authenticate }
+                  allowed_client_headers_on_success:
+                    patterns:
+                    - { exact: set-cookie }
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  - name: grpc_mode
+    address: { socket_address: { address: 127.0.0.1, port_value: 18083 } }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: grpc_mode
+          normalize_path: true
+          merge_slashes: true
+          path_with_escaped_slashes_action: REJECT_REQUEST
+          route_config:
+            name: r2
+            virtual_hosts:
+            - name: site
+              domains: ["*"]
+              routes:
+              - match: { prefix: "/_session/" }
+                route: { cluster: session_http }
+                typed_per_filter_config:
+                  envoy.filters.http.ext_authz:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                    disabled: true
+              - match: { prefix: "/" }
+                route: { cluster: upstream }
+          http_filters:
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              transport_api_version: V3
+              failure_mode_allow: false
+              status_on_error: { code: ServiceUnavailable }
+              grpc_service:
+                envoy_grpc: { cluster_name: session_grpc }
+                timeout: 2s
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+  - name: session_http
+    type: STATIC
+    connect_timeout: 1s
+    load_assignment:
+      cluster_name: session_http
+      endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: 127.0.0.1, port_value: 18090 } } } }] }]
+  - name: session_grpc
+    type: STATIC
+    connect_timeout: 1s
+    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config: { http2_protocol_options: {} }
+    load_assignment:
+      cluster_name: session_grpc
+      endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: 127.0.0.1, port_value: 18091 } } } }] }]
+  - name: upstream
+    type: STATIC
+    connect_timeout: 1s
+    load_assignment:
+      cluster_name: upstream
+      endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: 127.0.0.1, port_value: 18095 } } } }] }]

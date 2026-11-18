@@ -1,0 +1,4 @@
+=== nginx-normalised-uri (http://127.0.0.1:18082)
+i dot-segment /assets/../private/x without cookie: 401 Location="" upstream: (did not reach the upstream)
+i2 encoded dot-segment /assets/%2e%2e/private/x: 401 Location="" upstream: (did not reach the upstream)
+i3 merged slashes //assets//..//private: 401 Location="" upstream: (did not reach the upstream)

@@ -1,0 +1,14 @@
+=== nginx-raw-request-uri (http://127.0.0.1:18082)
+a navigation, no cookie: 302 Location="http://127.0.0.1:18082/_session/login?return_to=%2Fapp%2Fx%3Fq%3D1"
+b fetch, no cookie: 401 Content-Type="application/json" body={"error":"login_required","login_url":"/_session/login"}
+c POST, no cookie: 401 body={"error":"login_required","login_url":"/_session/login"}
+c2 forged cookie id: 302 Location="http://127.0.0.1:18082/_session/login?return_to=%2Fapp%2Fx"
+d valid session: 200 upstream: X-Session-User=["91ed95a8-1f95-4dab-ac74-3d97a2d8167a"] X-Session-Email=["<email>"] X-Session-Groups=<absent> Cookie=["theme=dark; lang=en"] Authorization=<absent>
+d2 only the session cookie: 200 upstream: Cookie=<absent>
+e spoofed identity + Authorization with a valid session: 200 upstream: X-Session-User=["91ed95a8-1f95-4dab-ac74-3d97a2d8167a"] X-Session-Groups=<absent> Authorization=<absent>
+f public route, spoofed headers: 200 upstream: X-Session-User=<absent> Authorization=<absent> Cookie=<absent>
+g token route: 200 upstream: Authorization=["Bearer eyJhbGciOiJSUzI1NiIsInR5cCIg..."
+h Set-Cookie on an allowed request: 200 Set-Cookie=["__Host-spike=<value>; Path=/; HttpOnly; Secure; SameSite=Lax"]
+i dot-segment /assets/../private/x without cookie: 200 Location="" upstream: _path=["/assets/../private/x"]
+i2 encoded dot-segment /assets/%2e%2e/private/x: 200 Location="" upstream: _path=["/assets/%2e%2e/private/x"]
+i3 merged slashes //assets//..//private: 401 Location="" upstream: (did not reach the upstream)
