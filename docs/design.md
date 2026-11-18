@@ -44,7 +44,7 @@ One check core does the work. Adapters only translate between a proxy's protocol
 | Adapters | Envoy external authorisation (HTTP and gRPC), nginx `auth_request`, AWS API Gateway Lambda authorizer |
 | Sign-in handler | Login, callback, logout, back-channel logout, whoami |
 | Exchange client | Gets and caches a token for each API audience (RFC 8693) |
-| Session store | Valkey, or DynamoDB for API Gateway installs |
+| Ports | Go interfaces for the session store, keys and policy (section 9). First implementations: DynamoDB, key file and AWS KMS, the site file |
 | In-path mode | The same service as a reverse proxy, for sites where one more hop is fine |
 
 Libraries: `coreos/go-oidc`, `golang.org/x/oauth2`, `go-jose`. We write the glue, not the cryptography.
@@ -89,9 +89,9 @@ Hosts:
 
 | Host | How it asks | Notes |
 | --- | --- | --- |
-| Envoy Gateway | `SecurityPolicy` with external authorisation, HTTP or gRPC | Allow headers set on the upstream request, deny answer passed to the browser |
+| Envoy Gateway | `SecurityPolicy` with external authorisation, HTTP and gRPC adapters from the start | Allow headers set on the upstream request, deny answer passed to the browser |
 | nginx | `auth_request` with `auth_request_set` | Self-hosted installs |
-| AWS API Gateway | Lambda authorizer | Cannot redirect. It returns 401 and the browser helper starts sign-in |
+| AWS API Gateway | Lambda authorizer | Cannot redirect. It returns 401 and the browser helper starts sign-in. The authorizer does not cache its answers by default. The sign-in paths go to the service over an HTTP integration, or to the same binary as a second Lambda handler, for each install. Where there is no cluster, the Lambda handler is the default |
 
 The in-path mode is a plain reverse proxy that runs the same check, then forwards the request. It costs a hop, so it is for sites where that is fine.
 
@@ -102,7 +102,7 @@ These are the rules every host gets. They do not depend on the proxy.
 | Id | Rule |
 | --- | --- |
 | S1 | Cookie `__Host-<site>`: opaque id, `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain` |
-| S2 | Sessions live on the server, encrypted, in Valkey (DynamoDB for API Gateway installs). Each site has an idle and a maximum lifetime |
+| S2 | Sessions live on the server, encrypted, in DynamoDB on every shape. Each site has an idle and a maximum lifetime |
 | S3 | Sign-in uses authorisation code with PKCE, always. PAR and `private_key_jwt` are used (issuers have them) |
 | S4 | Page without session: redirect to sign-in. API call: JSON 401. The API Gateway authorizer cannot redirect, so it returns 401 and the browser helper starts sign-in |
 | S5 | State-changing requests need CSRF protection: a custom header plus `Origin` and `Sec-Fetch-Site` checks. Headers only |
@@ -121,11 +121,11 @@ These are the rules every host gets. They do not depend on the proxy.
 | exchanged tokens | One entry per audience, see section 7 |
 | created, last seen, expires | Idle and maximum lifetime |
 
-The record is encrypted with AES-256-GCM. The session id is the associated data. Keys come from a key ring, so they can be rotated.
+The record is encrypted with AES-256-GCM. The session id is the associated data. The data keys come from the key port, so they can be rotated.
 
 A new id is issued at sign-in, so a session id set before sign-in is never reused (no fixation).
 
-Idle time is refreshed at most once a minute, to keep writes down. The default lifetimes are suggestions: 30 minutes idle, 8 hours maximum. Each site sets its own.
+Idle time is refreshed at most once a minute, to keep writes down. The default lifetimes are suggestions: 30 minutes idle, 8 hours maximum. Each site sets its own. These defaults were accepted on 2026-11-18 (decision 0011).
 
 ### 5.2 Paths
 
@@ -138,6 +138,7 @@ Idle time is refreshed at most once a minute, to keep writes down. The default l
 | `/_session/logout` | POST | End the session. Needs CSRF headers |
 | `/_session/backchannel-logout` | POST | Called by the issuer |
 | `/_session/whoami` | GET | JSON: subject, name, groups, session expiry |
+| `/_session/jwks` | GET | Public keys of the service, for apps that verify the signed identity header |
 
 ### 5.3 Unauthenticated requests
 
@@ -214,7 +215,7 @@ Rules:
 - A lock (single flight) stops many parallel requests from exchanging at once.
 - Cache entries are deleted with the session, at logout and at back-channel logout.
 - If the exchange is refused, the answer is 403 for that route. The session stays.
-- Option C is an opt-in per route: a signed identity header with user and groups, for apps that cannot handle tokens. The service signs it with its own key and publishes the public key. It is short-lived.
+- Option C is an opt-in per route: a signed identity header with user and groups, for apps that cannot handle tokens. The service signs it through the key port and publishes the public keys at `/_session/jwks`. It is short-lived, about a minute.
 - Forwarding the session token itself (option B) is rejected, because one token would be valid on every API.
 
 ## 8. Logout
@@ -249,17 +250,45 @@ sequenceDiagram
 Design consequences:
 
 - Replicas keep no session state. The next check on any replica sees the deletion at once.
-- For this reason the first version has no local session cache (see open question Q2).
-- With DynamoDB the same index is a secondary index on `sid` and `sub`.
+- For this reason the first version has no local session cache (decision 0012). The spike measures DynamoDB latency.
+- The `sid` and `sub` lookups use a secondary index on the session table.
 
-## 9. Session store
+## 9. Ports: store, keys, policy
 
-| Store | Used by | Notes |
-| --- | --- | --- |
-| Valkey | Kubernetes and self-hosted installs | HA, authentication and TLS are required. Keys have TTLs. Indexes for `sid` and `sub` are sets |
-| DynamoDB | API Gateway installs | TTL attribute, conditional writes for the locks, secondary index for logout |
+The core talks to three Go interfaces (ports). They are shaped like the building blocks of sluis v2, so that `session` can switch to them once the sluis core is done (alpha.2). Decision 0009.
 
-One small store interface, two backends. A memory store exists for tests only and refuses to start in production mode.
+| Port | Shaped like | Job | First implementation |
+| --- | --- | --- | --- |
+| Session store | sluis `store` | get, put, delete, conditional update, expiry | DynamoDB |
+| Key | sluis `key` | sign, public keys (JWKS), data keys for record encryption | A key file, and AWS KMS |
+| Policy | sluis `policy` | per-route decisions: which API token a route needs, who may reach it | The site file |
+
+### Session store on DynamoDB
+
+Sessions live in DynamoDB on every shape: Kubernetes, nginx and API Gateway installs alike (decision 0010).
+
+| Need | How |
+| --- | --- |
+| Expiry | A TTL attribute, plus an explicit expiry check on read, because TTL deletion is lazy |
+| Idle refresh | A conditional update, at most once a minute for each session |
+| Exchange lock | A conditional write with a short expiry, one item for each session and audience |
+| Back-channel logout | A secondary index on `sid` and `sub` |
+| Token cache | Items under the session, deleted with it |
+
+Rules:
+
+- The check reads the session item for each request. The spike measures the latency and the cost.
+- Reads of the session item are strongly consistent, so a logout is seen at once.
+- A memory store exists for tests only and refuses to start in production mode.
+- The Helm chart takes a table name and a cloud identity (a service account role). It does not run a store.
+
+### Keys
+
+The key port covers three jobs: the `private_key_jwt` assertions, the signed identity header, and the data keys that encrypt session records. The key file is the simple start and works with Keycloak. AWS KMS keeps the key from ever leaving it. The JWKS of the service is published at `/_session/jwks`.
+
+### Policy
+
+The policy port answers, for a request on a route: is a session needed, which API audience's token does the route need, and may this person reach it. At first the answer comes from the route table of the site file (section 10).
 
 ## 10. Site configuration
 
@@ -302,8 +331,8 @@ Routes are matched in order. The first match wins. The check matches on the norm
 
 | In the repo | Path (planned) |
 | --- | --- |
-| Check service, image and Helm chart: 2 replicas, Service, NetworkPolicy, Valkey connection with HA, auth and TLS | `cmd/session`, `charts/session` |
-| Lambda authorizer package | `cmd/authorizer-lambda` |
+| Check service, image and Helm chart: 2 replicas, Service, NetworkPolicy, DynamoDB table name and cloud identity | `cmd/session`, `charts/session` |
+| Lambda authorizer package, and the same binary as a second Lambda handler for the sign-in paths | `cmd/authorizer-lambda` |
 | Example host configs: Envoy `SecurityPolicy`, nginx, API Gateway | `examples/` |
 | Site config schema, `session check` validator and generator | `schema/`, `cmd/session` |
 | Browser helper in TypeScript: `apiFetch` (401 gives a re-login hint), `whoami`, `signOut` as POST with CSRF | `web/` |
@@ -348,105 +377,57 @@ The full model goes into `docs/threat-model.md` with the first code.
 
 The conformance suite drives a headless browser through the real flows: sign-in, an API call with a 401 and re-login, CSRF refusal, logout, back-channel logout across two replicas, session expiry, and header stripping. It runs in CI against a test sluis and a test Keycloak, with each host adapter in turn.
 
-## 15. Next steps
+## 15. Decisions after review
+
+On 2026-11-18 the maintainers accepted the defaults of this document and answered the questions that came with it. They are recorded in decisions 0009 to 0012. In short:
+
+| Topic | Decided | Record |
+| --- | --- | --- |
+| Ports shaped like sluis v2 building blocks | Yes, own interfaces now, switch to the sluis blocks at alpha.2 | 0009 |
+| Session store | DynamoDB on every shape. Valkey is dropped | 0010 |
+| Defaults: `/_session/` paths, keyed-hash store key, AES-256-GCM, 30 min idle and 8 h maximum, YAML site file, fail closed with 503, redirect for top-level navigations and 401 otherwise | Accepted as written | 0011 |
+| API Gateway sign-in handlers | HTTP integration or a second Lambda handler for each install, default Lambda where there is no cluster | 0012 |
+| Local session cache | None at first | 0012 |
+| `private_key_jwt` key and identity header key | Through the key port: key file and AWS KMS. JWKS published | 0012 |
+| Sites and hosts | One site per host | 0012 |
+| Authorizer caching | Off by default | 0012 |
+| Subject token freshness | Refresh token stored, refreshed under a lock | 0012 |
+| Envoy adapters | HTTP and gRPC from the start | 0012 |
+| Refused exchange | JSON 403 for API routes, error page for page routes | 0012 |
+
+## 16. Next steps
 
 1. Spike, about a week:
-   - Envoy and nginx check paths: headers set, `Cookie` rewrite, deny answers, cookie `Set-Cookie` on refresh.
-   - The Lambda authorizer: response shape, how identity reaches the integration, caching and its effect on logout.
+   - Envoy and nginx check paths, HTTP and gRPC: headers set, `Cookie` rewrite, deny answers, `Set-Cookie` on refresh.
+   - The Lambda authorizer: response shape, how identity reaches the integration, the second Lambda handler for the sign-in paths.
+   - DynamoDB: latency and cost of a read for each request, strongly consistent reads, the conditional update for idle time, the secondary index for logout.
    - The E8 check: sluis v1 token exchange with the proxy's sign-in token.
-2. Build the check core, the Valkey store, the sign-in handler and the Envoy adapter against Keycloak.
-3. Add the nginx adapter, the exchange client and the conformance suite.
+2. Build the check core, the three ports with their first implementations (DynamoDB, key file, site-file policy), the sign-in handler and the Envoy adapters against Keycloak.
+3. Add the nginx adapter, the AWS KMS key, the exchange client and the conformance suite.
 4. First version for the first internal sites.
-5. DynamoDB store and Lambda authorizer.
-6. Move to sluis v2 when PAR and `private_key_jwt` land.
+5. Lambda authorizer and the Lambda sign-in handler.
+6. Move to sluis v2 when PAR and `private_key_jwt` land, and to its building blocks once its core is done (alpha.2).
 
 ### Open questions
 
-Each has options and a recommendation. The maintainers decide.
+The questions of the first draft are decided (section 15). Two new ones came from dropping Valkey. Each has options and a recommendation.
 
-**Q1. How do API Gateway installs run sign-in and callback?** An authorizer cannot serve pages.
-
-| Option | Meaning |
-| --- | --- |
-| A | Route `/_session/*` to the service over an HTTP integration |
-| B | Ship the same binary as a second Lambda handler for these paths |
-| C | Both, chosen per install |
-
-Recommendation: C, with B as the default for Lambda-shape sites that have no cluster to reach. Same code, two entry points.
-
-**Q2. Should a replica cache sessions locally?**
+**Q1. What do installs without AWS use for sessions?** A self-hosted nginx site may have no AWS account to hold a DynamoDB table.
 
 | Option | Meaning |
 | --- | --- |
-| A | No cache. One store read per request |
-| B | Short cache (a few seconds), cleared by pub/sub on logout |
-| C | Short cache, no invalidation. Logout lags by the cache time |
+| A | Every install uses a DynamoDB table it can reach. No second store |
+| B | Add a store implementation for a DynamoDB-compatible local service |
+| C | Add another store (for example a relational database) behind the store port |
 
-Recommendation: A for the first version. Measure the store latency in the spike. Add B only if the numbers need it.
+Recommendation: A for now. The store port lets us add B or C when a real site needs it. Do not write a second store before then.
 
-**Q3. Where does the `private_key_jwt` key live?**
-
-| Option | Meaning |
-| --- | --- |
-| A | A mounted secret file, rotated by the platform |
-| B | A cloud KMS signs each assertion, the key never leaves it |
-| C | Both, behind one signer interface |
-
-Recommendation: C. Start with A (simple, works with Keycloak), add B for the Lambda and for sluis v2.
-
-**Q4. How is the signed identity header (option C of E4) signed and verified?**
+**Q2. How do we keep logout correct with a secondary index?** Secondary indexes are eventually consistent. A logout token that arrives just after sign-in could miss the new session.
 
 | Option | Meaning |
 | --- | --- |
-| A | The service's own key, public key published at `/_session/jwks`, lifetime about a minute |
-| B | A token exchanged from the issuer for the app's audience, as in `exchange` mode |
-| C | HMAC with a secret shared with the app |
+| A | Accept it. The session still ends by idle or maximum time |
+| B | Also store the logout as a tombstone for each `sid` and `sub` for a short time. The check refuses sessions older than a tombstone |
+| C | Look up sessions by a base-table key built from `sid`, so no index is needed |
 
-Recommendation: A. B is already the `exchange` mode, and C makes every app a signer.
-
-**Q5. One site per host, or several sites on a host?** The `__Host-` prefix forces `Path=/`, so two sites on one host would share one cookie.
-
-| Option | Meaning |
-| --- | --- |
-| A | One site per host only |
-| B | Allow path-based sites with a `__Secure-` cookie and a `Path` attribute |
-
-Recommendation: A. It keeps the cookie rules strict. Use B only if a real site needs it.
-
-**Q6. Should the API Gateway authorizer cache its answers?** A cache means fewer Lambda calls but a slower logout.
-
-| Option | Meaning |
-| --- | --- |
-| A | Cache off. Every request calls the authorizer |
-| B | Cache for a short time (up to 10 seconds), opt-in per site |
-| C | Cache for minutes |
-
-Recommendation: A by default, B as opt-in with the logout lag written in the docs. Not C.
-
-**Q7. How is the sign-in token kept fresh for exchange?** The exchange needs a valid subject token, and access tokens are short.
-
-| Option | Meaning |
-| --- | --- |
-| A | Store the refresh token and refresh under a lock. End the session if refresh fails |
-| B | No refresh. The session lasts as long as the first access token |
-| C | Ask the issuer to accept the ID token as subject token |
-
-Recommendation: A. B gives short sessions and C depends on the issuer. Rotation of refresh tokens is why the lock matters.
-
-**Q8. Which Envoy adapter comes first, HTTP or gRPC?** The nginx adapter and Envoy's HTTP mode share one handler.
-
-| Option | Meaning |
-| --- | --- |
-| A | HTTP only in the first version |
-| B | HTTP and gRPC together |
-
-Recommendation: A. Measure both in the spike. Add gRPC if it saves latency or header size.
-
-**Q9. What does a user see when the exchange is refused?** The route returns 403, but a page route has no good place for it.
-
-| Option | Meaning |
-| --- | --- |
-| A | JSON 403 for API routes, a plain error page for page routes |
-| B | Always JSON, the front end decides |
-
-Recommendation: A, with the error page template set per site.
+Recommendation: B. It is small, and it closes the gap that A leaves. Check it in the spike.

@@ -1,6 +1,6 @@
 # 0004. Repository contents
 
-Status: accepted, 2026-11-18 (decision E2)
+Status: accepted, 2026-11-18 (decision E2). Amended 2026-11-18: Valkey dropped, see 0010
 
 ## Context
 
@@ -20,8 +20,8 @@ B, one repository.
 
 In the repo:
 
-- The check service: image and Helm chart (2 replicas, Service, NetworkPolicy, Valkey connection with HA, authentication and TLS).
-- The Lambda authorizer package.
+- The check service: image and Helm chart (2 replicas, Service, NetworkPolicy, DynamoDB table name and cloud identity).
+- The Lambda authorizer package, and the same binary as a second Lambda handler for the sign-in paths.
 - Example host configs: Envoy `SecurityPolicy`, nginx, API Gateway.
 - The site config schema, the `session check` validator and a generator.
 - A small TypeScript browser helper: `apiFetch` (401 gives a re-login hint), `whoami`, `signOut` as POST with CSRF.

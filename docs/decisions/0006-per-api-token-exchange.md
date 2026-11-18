@@ -23,4 +23,4 @@ A for every API route. C as an opt-in for each route, for apps that cannot handl
 - A leaked token works for one API only.
 - The check needs a cache and a lock, so parallel requests make one exchange.
 - The issuer must allow the exchange for each client and audience.
-- Apps using C trust the check's signing key. The key and its lifetime are an open question in the design.
+- Apps using C trust the check's signing key. The service signs the header through the key port (0009) and publishes its public keys at `/_session/jwks`. The header lives about a minute (0012).
