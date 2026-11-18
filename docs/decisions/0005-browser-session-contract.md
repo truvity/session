@@ -21,7 +21,7 @@ B. The contract:
 | Id | Rule |
 | --- | --- |
 | S1 | Cookie `__Host-<site>`, opaque id, `Secure`, `HttpOnly`, `SameSite=Lax` |
-| S2 | Sessions live on the server, encrypted, in Valkey (DynamoDB for API Gateway installs). Idle and maximum lifetimes for each site |
+| S2 | Sessions live on the server, encrypted, in DynamoDB on every shape (amended, see 0010). Idle and maximum lifetimes for each site |
 | S3 | Authorisation code with PKCE always. PAR and `private_key_jwt` are used (E7 B: issuers have them) |
 | S4 | A page without a session gets a sign-in redirect. An API call gets a JSON 401. API Gateway's authorizer cannot redirect, so it returns 401 and the browser helper starts sign-in |
 | S5 | CSRF on state-changing requests: a custom header plus `Origin` and `Sec-Fetch-Site` checks. Headers only, because the check never sees the body |
