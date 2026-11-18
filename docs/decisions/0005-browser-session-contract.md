@@ -1,6 +1,6 @@
 # 0005. Browser session behaviour contract
 
-Status: accepted, 2026-11-18 (decision E3)
+Status: accepted, 2026-11-18 (decision E3). S4 and S8 amended after the first spike, coordinator's call 2026-11-18, for review: see 0015 and 0016
 
 ## Context
 
@@ -34,3 +34,8 @@ B. The contract:
 - Replicas keep no session state of their own, so logout is immediate on all of them.
 - Sites on API Gateway need the browser helper to start sign-in.
 - The CSRF rule depends on the host forwarding the headers it needs.
+
+## Amendment after the first spike (coordinator's call 2026-11-18, for review)
+
+- S4: on API Gateway "no session" is the error `Unauthorized` (401), never a deny policy (403). nginx makes the redirect and the 401 body itself from a marker in the check's 401 (0015, 0016).
+- S8: Envoy gRPC strips with `headers_to_remove`. Envoy HTTP and nginx set every owned header on every request, or the route removes them. On API Gateway the integration's parameter mapping strips; the HTTP API cannot map `Authorization` (0015, 0016).

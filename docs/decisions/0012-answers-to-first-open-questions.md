@@ -1,6 +1,6 @@
 # 0012. Answers to the open questions of the first draft
 
-Status: accepted, 2026-11-18
+Status: accepted, 2026-11-18. Q1, Q6 and Q8 amended after the first spike, coordinator's call 2026-11-18, for review: see 0015 and 0016
 
 ## Context
 
@@ -25,3 +25,10 @@ The first draft ended with nine open questions. The maintainers answered them, a
 - The open-questions list of the design now holds only the two questions that came from dropping Valkey.
 - The spike gains items: DynamoDB latency and cost, the Lambda sign-in handler, and gRPC next to HTTP.
 - Refresh under a lock uses the same conditional-write lock as the exchange.
+
+## Amendments after the first spike (coordinator's call 2026-11-18, for review)
+
+- Q6: "off by default" holds only if the authorizer's TTL is set to 0 explicitly. The REST API default is 300 seconds (0015).
+- Q8: gRPC mode is preferred. HTTP mode stays, documented with its limits (0016).
+- Q1: both API Gateway handlers stay. The docs default to the HTTP API (0015).
+- Q2: the DynamoDB latency was measured on DynamoDB Local only. Real latency from the target region is still open (design, "Open for the maintainers").

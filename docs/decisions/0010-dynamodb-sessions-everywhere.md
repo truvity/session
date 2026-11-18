@@ -22,7 +22,7 @@ B. Sessions live in DynamoDB on every shape. Valkey is dropped from the design.
 
 - S2 changes: sessions are encrypted, in DynamoDB. Idle and maximum lifetimes for each site stay.
 - The Helm chart takes a table name and a cloud identity. It does not run a store.
-- Locks, expiry and the logout lookup use conditional writes, a TTL attribute and a secondary index.
+- Locks and expiry use conditional writes and a TTL attribute. The logout lookup uses pointer items, not a secondary index (0013, coordinator's call 2026-11-18, for review).
 - No local session cache at first. The spike measures DynamoDB latency and cost (0012).
-- Installs without AWS are an open question in the design.
+- Installs without AWS: every install uses a DynamoDB table it can reach (0014, coordinator's call 2026-11-18, for review).
 - The store port (0009) keeps another store possible later.
