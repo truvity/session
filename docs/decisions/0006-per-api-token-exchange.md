@@ -1,6 +1,6 @@
 # 0006. Per-API tokens by token exchange
 
-Status: accepted, 2026-11-18 (decision E4, option A, with C as opt-in)
+Status: accepted, 2026-11-18 (decision E4, option A, with C as opt-in). Amended after the first spike, coordinator's call 2026-11-18, for review: on the API Gateway HTTP API the token travels in `X-Session-Token`, because `Authorization` is reserved in parameter mapping (0015)
 
 ## Context
 

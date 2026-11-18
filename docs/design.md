@@ -1,6 +1,6 @@
 # Design of truvity/session
 
-Status: design, 2026-11-18. No code yet.
+Status: design, 2026-11-18. Amended after the first spike (section 17, [findings](spike-2026-11-18.md)). The amendments are marked "coordinator's call 2026-11-18, for review" and wait for the maintainers. Prototype code exists only as a throwaway spike in [spike/](../spike/).
 
 Decisions are recorded one by one in [docs/decisions](decisions/). This document puts them together and shows how the parts work.
 
@@ -83,15 +83,43 @@ Rules of this mode:
 - The proxy sends only headers. The check never sees the body.
 - The proxy strips `Authorization`, `Cookie` and identity headers that came from the browser. The allow answer sets the real ones. The example configs ship this.
 - The sign-in paths (`/_session/*`) are routed to the service without a check, because they run before a session exists.
-- The check fails closed. If the store is down, the answer is 503, never allow.
+- The check fails closed. If the store is down, the answer is 503, never allow. The check bounds every store call with its own timeout (1.5 s in the spike), and the proxy's timeout for the check is longer, so the check's 503 is the one the client sees. nginx shows it as 500 (see below).
+- The check must see the same normalised path the proxy routes on. Each host example ships the settings for it (see the host notes below). *(After the spike; coordinator's call 2026-11-18, for review.)*
 
 Hosts:
 
 | Host | How it asks | Notes |
 | --- | --- | --- |
-| Envoy Gateway | `SecurityPolicy` with external authorisation, HTTP and gRPC adapters from the start | Allow headers set on the upstream request, deny answer passed to the browser |
-| nginx | `auth_request` with `auth_request_set` | Self-hosted installs |
-| AWS API Gateway | Lambda authorizer | Cannot redirect. It returns 401 and the browser helper starts sign-in. The authorizer does not cache its answers by default. The sign-in paths go to the service over an HTTP integration, or to the same binary as a second Lambda handler, for each install. Where there is no cluster, the Lambda handler is the default |
+| Envoy Gateway | `SecurityPolicy` with external authorisation. gRPC mode is preferred, HTTP mode is documented | See "Envoy notes" below |
+| nginx | `auth_request` with `auth_request_set` | Self-hosted installs. See "nginx notes" below |
+| AWS API Gateway | Lambda authorizer, for both the REST API and the HTTP API (payload 2.0). The docs default to the HTTP API | Cannot redirect, cannot set or remove headers, cannot send `Set-Cookie`. See "API Gateway notes" below. Where there is no cluster, the Lambda handler is the default |
+
+*Envoy notes* (spike, coordinator's call 2026-11-18, for review):
+
+- gRPC mode is preferred. The allow answer carries `headers` (overwrite) and `headers_to_remove`, so a browser-sent `Authorization` or `Cookie` is removed, not left empty. `Set-Cookie` goes in `response_headers_to_add` and may hold several cookies.
+- HTTP mode works but cannot remove a header: the allow answer can only set it to an empty value, and the upstream then sees an empty `Authorization`. The HTTP example therefore adds `request_headers_to_remove` on the route, or the allow answer always sets every header it owns. `Set-Cookie` needs `allowed_client_headers_on_success`. A deny answer's `Location` and `Content-Type` need `allowed_client_headers`. A 503 from the check keeps its status but loses its body.
+- The check sees only the headers the example lists in the top-level `allowed_headers` (`cookie`, `accept`, `sec-fetch-mode`, `sec-fetch-site`, `origin`). The older `authorization_request.allowed_headers` is deprecated in Envoy v1.34. Without `sec-fetch-mode` every navigation becomes a 401, so the conformance suite checks it.
+- The connection manager sets `normalize_path: true`, `merge_slashes: true` and `path_with_escaped_slashes_action: REJECT_REQUEST`, so the check gets the path the router uses.
+- The sign-in prefix is excluded with `ExtAuthzPerRoute` and `disabled: true`.
+- If the check cannot be reached, Envoy answers with `status_on_error` (503) and `failure_mode_allow: false` stays.
+
+*nginx notes* (spike, coordinator's call 2026-11-18, for review):
+
+- `auth_request` accepts only 2xx, 401 and 403 from the check and turns any other status into a 500. It also forwards neither a 302 nor a body. The nginx adapter answers 401 with the markers `X-Session-Action` and `X-Session-Location`. A named location turns the marker into a 302 for top-level navigations, and nginx itself writes the JSON `login_required` body for everything else. The example carries both.
+- Fail closed shows as 500 on nginx, not 503. The request is still refused.
+- The check must be given the normalised path: `proxy_set_header X-Original-URI $uri$is_args$args`. With `$request_uri` the check saw `/assets/../private/x`, took it for the public `/assets/` prefix and allowed it without a session, while the upstream received the raw path (reproduced in the spike). `$uri` is decoded, so the example rejects encoded slashes.
+- Identity headers, `Authorization` and `Cookie` are set from `auth_request_set` variables on every request. An empty variable makes nginx drop the header, so a browser-sent value cannot pass.
+- `Set-Cookie` from `auth_request_set` carries only the first cookie.
+
+*API Gateway notes* (spike, coordinator's call 2026-11-18, for review):
+
+- Both handlers stay: the REST API `REQUEST` authorizer (also usable on HTTP API payload 1.0) and the HTTP API payload 2.0 authorizer with simple responses. The docs and examples default to the HTTP API. The HTTP API event carries the cookies in a separate `cookies` array; the handler joins them.
+- "No session" is answered with the error `Unauthorized`, which API Gateway turns into a 401. A deny policy gives 403 on the REST API, which the browser helper would not read as "sign in".
+- **Caching is configured, not assumed.** The REST API authorizer caches for 300 seconds when `authorizerResultTtlInSeconds` is not set (maximum 3600, 0 disables). The examples and the chart set it to 0 explicitly on both products, and a check in the examples tests for it. The HTTP API page does not state a default, so it is set to 0 as well. With caching on, a logout lags by the TTL (the cache key is the identity sources, such as the whole `Cookie` header). This keeps decision 0012 Q6 A true.
+- The authorizer cannot change the request or the response. Only `principalId` and `context` reach the integration, as `$context.authorizer.<key>`. The browser's headers reach the integration unchanged, so stripping (S8) is the integration's parameter mapping, not the allow answer.
+- The HTTP API reserves `Authorization` (and `Origin`, `Forwarded`, `X-Forwarded-*`, `Via`, among others) in parameter mapping, so it cannot be set or removed there. The per-API token travels in a non-reserved header, `X-Session-Token`, and the site must ignore a browser-sent `Authorization`.
+- The sign-in paths go to the service over an HTTP integration, or to the same binary as a second Lambda handler (an HTTP API proxy integration, `Set-Cookie` lines in the response `cookies` array), for each install.
+- Items from the AWS documentation that the spike did not run in a real account are listed in "Next steps".
 
 The in-path mode is a plain reverse proxy that runs the same check, then forwards the request. It costs a hop, so it is for sites where that is fine.
 
@@ -104,10 +132,10 @@ These are the rules every host gets. They do not depend on the proxy.
 | S1 | Cookie `__Host-<site>`: opaque id, `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain` |
 | S2 | Sessions live on the server, encrypted, in DynamoDB on every shape. Each site has an idle and a maximum lifetime |
 | S3 | Sign-in uses authorisation code with PKCE, always. PAR and `private_key_jwt` are used (issuers have them) |
-| S4 | Page without session: redirect to sign-in. API call: JSON 401. The API Gateway authorizer cannot redirect, so it returns 401 and the browser helper starts sign-in |
+| S4 | Page without session: redirect to sign-in. API call: JSON 401. The API Gateway authorizer cannot redirect, so it returns the error `Unauthorized` (401, never a deny policy) and the browser helper starts sign-in. nginx makes the redirect and the 401 body itself from a marker in the check's 401 |
 | S5 | State-changing requests need CSRF protection: a custom header plus `Origin` and `Sec-Fetch-Site` checks. Headers only |
 | S6 | Logout is a POST with CSRF, then the issuer's end-session. Back-channel logout deletes the session on all replicas |
-| S8 | The browser's `Authorization`, cookies and identity headers are stripped. In external authorisation the host strips and the allow answer sets them |
+| S8 | The browser's `Authorization`, cookies and identity headers are stripped. In external authorisation the host strips and the allow answer sets them. Envoy gRPC strips with `headers_to_remove`; Envoy HTTP and nginx set every owned header on every request (or the route removes them); on API Gateway the integration's parameter mapping strips, and the HTTP API cannot map `Authorization`, so the per-API token uses `X-Session-Token` |
 
 (There is no S7. The ids follow the maintainers' list of decisions.)
 
@@ -119,7 +147,7 @@ These are the rules every host gets. They do not depend on the proxy.
 | subject, issuer, `sid` | From the ID token. Indexed for back-channel logout |
 | tokens | The sign-in access token and refresh token |
 | exchanged tokens | One entry per audience, see section 7 |
-| created, last seen, expires | Idle and maximum lifetime |
+| created, last seen, expires | Idle and maximum lifetime. `created` is in milliseconds, for the logout comparison (section 8) |
 
 The record is encrypted with AES-256-GCM. The session id is the associated data. The data keys come from the key port, so they can be rotated.
 
@@ -238,8 +266,9 @@ sequenceDiagram
     LB->>R2: forward
     R2->>R2: validate JWT: signature, iss, aud, events claim, no nonce
     R2->>V: set jti if absent, reject replay
-    R2->>V: find sessions by sid, or by sub if no sid
-    R2->>V: delete sessions and their exchanged tokens
+    R2->>V: write tombstone for sid or sub
+    R2->>V: read pointer item for sid (or sub), strongly consistent
+    R2->>V: delete the sessions it lists, their exchanged tokens and the pointer
     R2-->>I: 200
     B->>R1: next request through host proxy
     R1->>V: load session
@@ -250,8 +279,10 @@ sequenceDiagram
 Design consequences:
 
 - Replicas keep no session state. The next check on any replica sees the deletion at once.
-- For this reason the first version has no local session cache (decision 0012). The spike measures DynamoDB latency.
-- The `sid` and `sub` lookups use a secondary index on the session table.
+- For this reason the first version has no local session cache (decision 0012). The spike measured DynamoDB Local only (0.2 to 0.5 ms per call); real DynamoDB latency is still to be measured ("Next steps").
+- There is no secondary index. Pointer items hold the session keys for each `sid` and each subject (decision 0013, coordinator's call 2026-11-18, for review). A pointer item is written in the same transaction as the session. The logout reads it with a strongly consistent GetItem, so it cannot miss a session committed before it.
+- One race is left: a logout that arrives before the sign-in has finished. The callback closes it with one tombstone read at session creation (never on each check). If a tombstone newer than the start of the sign-in exists, the callback ends the session it just made.
+- Tombstones are written by every back-channel logout, by `sid`, or by subject when the token has no `sid`, and live as long as the maximum session lifetime.
 
 ## 9. Ports: store, keys, policy
 
@@ -272,12 +303,14 @@ Sessions live in DynamoDB on every shape: Kubernetes, nginx and API Gateway inst
 | Expiry | A TTL attribute, plus an explicit expiry check on read, because TTL deletion is lazy |
 | Idle refresh | A conditional update, at most once a minute for each session |
 | Exchange lock | A conditional write with a short expiry, one item for each session and audience |
-| Back-channel logout | A secondary index on `sid` and `sub` |
+| Back-channel logout | Pointer items per `sid` and per subject, written in the session-creation transaction, read with a strongly consistent GetItem. A tombstone read once at creation. No secondary index (decision 0013) |
 | Token cache | Items under the session, deleted with it |
+| Timeouts | Every store call has a timeout shorter than the proxy's timeout for the check, so a slow store is a down store and the check answers 503 |
 
 Rules:
 
-- The check reads the session item for each request. The spike measures the latency and the cost.
+- The check reads the session item for each request, and nothing else: one strongly consistent GetItem, which is 1 read unit for an item under 4 KB. The spike measured latency on DynamoDB Local only. Reading tombstones on each request was tested and rejected: it costs 3 read units instead of 1 (decision 0013).
+- The store port takes a timeout for each call (decision 0016).
 - Reads of the session item are strongly consistent, so a logout is seen at once.
 - A memory store exists for tests only and refuses to start in production mode.
 - The Helm chart takes a table name and a cloud identity (a service account role). It does not run a store.
@@ -352,7 +385,7 @@ Not in the repo:
 | sluis v2 | The target, once its FAPI work lands (PAR, `private_key_jwt`) |
 | Keycloak | Has PAR and `private_key_jwt` now. Used to build and test first |
 
-Check E8, in the first spike: does the token exchange of sluis v1 accept the proxy's sign-in token? If yes, sites on v1 can use `session` before the switch. If no, they wait.
+Check E8 (answered by the first spike, decision 0007, coordinator's call 2026-11-18, for review): does the token exchange of sluis v1 accept the proxy's sign-in token? **No.** v1 accepts a sign-in access token only from a `public` client that declares `sign_in_exchange`, and `session` is a confidential `private_key_jwt` client. v1 also has no PAR and no `private_key_jwt`. Sites on v1 wait for v2. A public-client workaround is rejected. What `session` needs from v2: its token exchange accepts the access token of a confidential `private_key_jwt` client as subject token, presented by the same client.
 
 ## 13. Threat model (summary)
 
@@ -367,7 +400,7 @@ The full model goes into `docs/threat-model.md` with the first code.
 | Open redirect | `return_to` must be a relative path, kept server-side |
 | Login CSRF and code injection | State plus binding cookie, PKCE, `iss` check |
 | Header spoofing | The host strips browser headers, the allow answer sets them (S8). The examples ship this |
-| Path confusion between proxy and check | Both use the normalised path. A conformance test sends encoded and dot-segment paths |
+| Path confusion between proxy and check | Both use the normalised path. Reproduced in the spike on nginx with `$request_uri`. The conformance suite sends dot-segment, encoded-dot and merged-slash paths to every host, and the examples ship Envoy `normalize_path`, `merge_slashes` and `path_with_escaped_slashes_action`, and nginx `$uri$is_args$args` with encoded slashes rejected |
 | Replay of logout tokens | `jti` stored until the token expires |
 | Store outage | Fail closed |
 | Token blast radius | One token per API audience. No token valid everywhere |
@@ -375,7 +408,7 @@ The full model goes into `docs/threat-model.md` with the first code.
 
 ## 14. Testing
 
-The conformance suite drives a headless browser through the real flows: sign-in, an API call with a 401 and re-login, CSRF refusal, logout, back-channel logout across two replicas, session expiry, and header stripping. It runs in CI against a test sluis and a test Keycloak, with each host adapter in turn.
+The conformance suite drives a headless browser through the real flows: sign-in, an API call with a 401 and re-login, CSRF refusal, logout, back-channel logout across two replicas, session expiry, and header stripping. It runs in CI against a test sluis and a test Keycloak, with each host adapter in turn. The dot-segment cases and the header-stripping cases run on every host. It uses TLS or a real browser, not a Go cookie jar over plain HTTP (a jar does not send `Secure` cookies over HTTP).
 
 ## 15. Decisions after review
 
@@ -390,44 +423,46 @@ On 2026-11-18 the maintainers accepted the defaults of this document and answere
 | Local session cache | None at first | 0012 |
 | `private_key_jwt` key and identity header key | Through the key port: key file and AWS KMS. JWKS published | 0012 |
 | Sites and hosts | One site per host | 0012 |
-| Authorizer caching | Off by default | 0012 |
+| Authorizer caching | Off by default (amended after the spike: set to 0 explicitly, because the REST API default is 300 s) | 0012, 0015 |
 | Subject token freshness | Refresh token stored, refreshed under a lock | 0012 |
-| Envoy adapters | HTTP and gRPC from the start | 0012 |
+| Envoy adapters | HTTP and gRPC from the start (amended after the spike: gRPC preferred) | 0012, 0016 |
 | Refused exchange | JSON 403 for API routes, error page for page routes | 0012 |
 
 ## 16. Next steps
 
-1. Spike, about a week:
-   - Envoy and nginx check paths, HTTP and gRPC: headers set, `Cookie` rewrite, deny answers, `Set-Cookie` on refresh.
-   - The Lambda authorizer: response shape, how identity reaches the integration, the second Lambda handler for the sign-in paths.
-   - DynamoDB: latency and cost of a read for each request, strongly consistent reads, the conditional update for idle time, the secondary index for logout.
-   - The E8 check: sluis v1 token exchange with the proxy's sign-in token.
+1. Spike, about a week. **Done on 2026-11-18**, see [the findings](spike-2026-11-18.md) and section 17. Not covered, and left for the maintainers: a short check in a real AWS account (below).
 2. Build the check core, the three ports with their first implementations (DynamoDB, key file, site-file policy), the sign-in handler and the Envoy adapters against Keycloak.
 3. Add the nginx adapter, the AWS KMS key, the exchange client and the conformance suite.
 4. First version for the first internal sites.
-5. Lambda authorizer and the Lambda sign-in handler.
-6. Move to sluis v2 when PAR and `private_key_jwt` land, and to its building blocks once its core is done (alpha.2).
+5. Lambda authorizer and the Lambda sign-in handler, for the HTTP API first, then the REST API.
+6. Move to sluis v2 when PAR and `private_key_jwt` land, and to its building blocks once its core is done (alpha.2). Sites on sluis v1 wait for v2 (decision 0007).
 
-### Open questions
+### Decided after the spike (coordinator's call 2026-11-18, for review)
 
-The questions of the first draft are decided (section 15). Two new ones came from dropping Valkey. Each has options and a recommendation.
+| Question | Decided | Roads not taken | Record |
+| --- | --- | --- | --- |
+| Q10. What do installs without AWS use for sessions? | A: every install uses a DynamoDB table it can reach. Another store only when a real site needs it | B: a DynamoDB-compatible local service. C: a relational database behind the store port. Both wait for a real site | 0014 |
+| Q11. How do we keep logout correct without a lagging index? | C: pointer items written in the session-creation transaction, a strongly consistent GetItem at logout, one tombstone read at creation | B: tombstone read on each check (3 read units a check instead of 1). A: accept the gap (a missed session lives until idle or maximum time) | 0013 |
 
-**Q1. What do installs without AWS use for sessions?** A self-hosted nginx site may have no AWS account to hold a DynamoDB table.
+### Open for the maintainers
 
-| Option | Meaning |
-| --- | --- |
-| A | Every install uses a DynamoDB table it can reach. No second store |
-| B | Add a store implementation for a DynamoDB-compatible local service |
-| C | Add another store (for example a relational database) behind the store port |
+Not decided. The spike could not settle them without a real AWS account.
 
-Recommendation: A for now. The store port lets us add B or C when a real site needs it. Do not write a second store before then.
+1. A short check in a real AWS account of the API Gateway items that were taken from the documentation: the HTTP API status for `isAuthorized: false`, the HTTP API default cache TTL, and integration parameter mapping with `$context.authorizer.*` (including the non-reserved token header).
+2. Real DynamoDB latency from the target region for the one strongly consistent read of each check, to confirm or reverse "no local cache" (decision 0012 Q2). The spike measured DynamoDB Local only.
+3. Whether the sluis v2 token exchange takes the access token of a confidential `private_key_jwt` client as subject token (a request to the sluis v2 owners, filed by the coordinator).
 
-**Q2. How do we keep logout correct with a secondary index?** Secondary indexes are eventually consistent. A logout token that arrives just after sign-in could miss the new session.
+## 17. Changes after the first spike
 
-| Option | Meaning |
-| --- | --- |
-| A | Accept it. The session still ends by idle or maximum time |
-| B | Also store the logout as a tombstone for each `sid` and `sub` for a short time. The check refuses sessions older than a tombstone |
-| C | Look up sessions by a base-table key built from `sid`, so no index is needed |
+All of these are coordinator's call 2026-11-18, for review. Details and evidence are in [the findings](spike-2026-11-18.md).
 
-Recommendation: B. It is small, and it closes the gap that A leaves. Check it in the spike.
+| Change | Where | Record |
+| --- | --- | --- |
+| Envoy: prefer gRPC mode, document HTTP mode with `request_headers_to_remove`, top-level `allowed_headers`, path normalisation, per-route disable | Section 4 | 0016 |
+| nginx: 401 plus marker pattern, `$uri$is_args$args`, encoded slashes rejected, fail-closed shows as 500 | Section 4 | 0016 |
+| API Gateway: both handlers, HTTP API is the default, authorizer TTL 0 set explicitly, `Unauthorized` error for no session, stripping by integration mapping, `X-Session-Token` for the per-API token | Sections 4 and 5 (S4, S8) | 0015 |
+| Logout race: pointer items, no secondary index, tombstone once at creation, `created` in milliseconds | Sections 5.1, 8, 9 | 0013 |
+| Installs without AWS: DynamoDB table everywhere | Section 16 | 0014 |
+| Store port: a timeout for each call, shorter than the proxy's | Sections 4, 9 | 0016 |
+| Path confusion: conformance dot-segment cases on every host, TLS or a real browser in the suite | Sections 13, 14 | 0016 |
+| E8 answered: no | Section 12 | 0007 |
