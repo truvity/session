@@ -1,6 +1,6 @@
 # 0009. Ports shaped like the sluis v2 building blocks
 
-Status: accepted, 2026-11-18 (decision P1, option A)
+Status: accepted, 2026-11-18 (decision P1, option A). Superseded by [0017](0017-atoom-ports-and-blocks.md) on 2026-11-20: session uses atoom's ports and blocks, not interfaces of its own.
 
 ## Context
 

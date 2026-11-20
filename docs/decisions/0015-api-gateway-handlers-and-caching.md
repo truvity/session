@@ -1,6 +1,6 @@
 # 0015. API Gateway: both handlers, HTTP API by default, caching set to zero
 
-Status: proposed, coordinator's call 2026-11-18, for review by the maintainers. Amends 0012 Q1 and Q6 and S4 and S8 of 0005. Evidence: docs/spike-2026-11-18.md, section 4. The API Gateway facts come from the AWS documentation, not from a real account; the unverified ones are listed in the design under "Open for the maintainers".
+Status: proposed, coordinator's call 2026-11-18, for review by the maintainers. Amends 0012 Q1 and Q6 and S4 and S8 of 0005. Evidence: docs/spike-2026-11-18.md, section 4. The API Gateway facts come from the AWS documentation, not from a real account; the unverified ones are listed in the design under "Open for the maintainers". Amended by [0017](0017-atoom-ports-and-blocks.md) on 2026-11-20: every function runs behind the Lambda Web Adapter; the authorizer case is tested in the fit spike.
 
 ## Context
 

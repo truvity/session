@@ -1,6 +1,6 @@
 # 0012. Answers to the open questions of the first draft
 
-Status: accepted, 2026-11-18. Q1, Q6 and Q8 amended after the first spike, coordinator's call 2026-11-18, for review: see 0015 and 0016
+Status: accepted, 2026-11-18. Q1, Q6 and Q8 amended after the first spike, coordinator's call 2026-11-18, for review: see 0015 and 0016. Q3 and Q4 amended by [0017](0017-atoom-ports-and-blocks.md) on 2026-11-20: the keys go through atoom's key port and the `keyring` block.
 
 ## Context
 
