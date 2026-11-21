@@ -1,6 +1,6 @@
 # 0002. Our own Go service on well-tested libraries
 
-Status: accepted, 2026-11-18 (decision E1, option B, with Go). Amended by [0017](0017-atoom-ports-and-blocks.md) on 2026-11-20: the code of the Group IDP reference stand may be reused where it fits.
+Status: accepted, 2026-11-18 (decision E1, option B, with Go). Amended by [0017](0017-atoom-ports-and-blocks.md) on 2026-11-20: the code of the group SSO reference stand may be reused where it fits.
 
 ## Context
 
