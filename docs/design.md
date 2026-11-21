@@ -1,6 +1,6 @@
 # Design of truvity/session
 
-Status: design, 2026-11-18. Amended after the first spike (section 17, [findings](spike-2026-11-18.md)). The amendments are marked "coordinator's call 2026-11-18, for review" and wait for the maintainers. Prototype code exists only as a throwaway spike in [spike/](../spike/).
+Status: design, 2026-11-18. Amended after the first spike (section 17, [findings](spike-2026-11-18.md)). The amendments are marked "coordinator's call 2026-11-18, for review" and wait for the maintainers. Prototype code exists only as a throwaway spike in [spike/](../spike/). Amended on 2026-11-20 by decision 0017: session is built on atoom (sections 9 and 16).
 
 Decisions are recorded one by one in [docs/decisions](decisions/). This document puts them together and shows how the parts work.
 
@@ -284,17 +284,21 @@ Design consequences:
 - One race is left: a logout that arrives before the sign-in has finished. The callback closes it with one tombstone read at session creation (never on each check). If a tombstone newer than the start of the sign-in exists, the callback ends the session it just made.
 - Tombstones are written by every back-channel logout, by `sid`, or by subject when the token has no `sid`, and live as long as the maximum session lifetime.
 
-## 9. Ports: store, keys, policy
+## 9. Ports and blocks: store, keys, policy, audit
 
-The core talks to three Go interfaces (ports). They are shaped like the building blocks of sluis v2, so that `session` can switch to them once the sluis core is done (alpha.2). Decision 0009.
+Since 2026-11-20 the core is built on [truvity/atoom](https://github.com/truvity/atoom) (decision 0017, which supersedes 0009). session has no port interfaces of its own.
 
-| Port | Shaped like | Job | First implementation |
-| --- | --- | --- | --- |
-| Session store | sluis `store` | get, put, delete, conditional update, expiry | DynamoDB |
-| Key | sluis `key` | sign, public keys (JWKS), data keys for record encryption | A key file, and AWS KMS |
-| Policy | sluis `policy` | per-route decisions: which API token a route needs, who may reach it | The site file |
+| Need | From atoom | First implementation |
+| --- | --- | --- |
+| Sessions and their items | `store` port | `store/dynamodb`; any driver that passes the store kit (PostgreSQL, Valkey) |
+| Signing, JWKS, sealing | `key` port and the `keyring` block | `key/awskms`, `key/software` (a key file) |
+| Site file and policy bundle | `source` port | `source/file` (Go) |
+| Who may reach a route | `cedar-go` in-process, loaded by atoom's Cedar loader | The signed policy bundle |
+| Audit events | the emitter of `truvity/audit` over atoom's `transport` port | to the sluis audit writer of the environment |
 
-### Session store on DynamoDB
+Every port is called through its generated ConnectRPC client, with the driver mounted in-process. Cedar is the one exception: a library by design (0017).
+
+### Session store (DynamoDB first)
 
 Sessions live in DynamoDB on every shape: Kubernetes, nginx and API Gateway installs alike (decision 0010).
 
@@ -430,12 +434,16 @@ On 2026-11-18 the maintainers accepted the defaults of this document and answere
 
 ## 16. Next steps
 
-1. Spike, about a week. **Done on 2026-11-18**, see [the findings](spike-2026-11-18.md) and section 17. Not covered, and left for the maintainers: a short check in a real AWS account (below).
-2. Build the check core, the three ports with their first implementations (DynamoDB, key file, site-file policy), the sign-in handler and the Envoy adapters against Keycloak.
-3. Add the nginx adapter, the AWS KMS key, the exchange client and the conformance suite.
-4. First version for the first internal sites.
-5. Lambda authorizer and the Lambda sign-in handler, for the HTTP API first, then the REST API.
-6. Move to sluis v2 when PAR and `private_key_jwt` land, and to its building blocks once its core is done (alpha.2). Sites on sluis v1 wait for v2 (decision 0007).
+Revised on 2026-11-20 after atoom 0.2.0 (decision 0017).
+
+1. Spike, about a week. **Done on 2026-11-18**, see [the findings](spike-2026-11-18.md) and section 17.
+2. Decision 0017: session on atoom. **Done on 2026-11-20.**
+3. Fit spike, about a day: the check core on atoom 0.2.0's `store/dynamodb` and `key` drivers mounted in-process; authorizer events through the Lambda Web Adapter; the same short check in a real AWS account that the first spike could not make (below).
+4. Check core, sign-in handler and Envoy adapters against Keycloak, about four to five days. The broker rules and the browser library come from the group SSO reference stand where they fit.
+5. nginx adapter, AWS KMS, the exchange client and the conformance suite (with the stand's scenarios and Keycloak findings), about three to four days. Needs from atoom: `keyring`, the Go `source/file` driver, the Cedar loader with its decision test set, the audit emitter in Go.
+6. First version for the first internal sites.
+7. Lambda: the authorizer and the sign-in handler behind the Lambda Web Adapter, HTTP API first, then REST API.
+8. sluis v2 as an issuer once PAR and `private_key_jwt` land there. Sites on sluis v1 wait for v2 (decision 0007).
 
 ### Decided after the spike (coordinator's call 2026-11-18, for review)
 
@@ -466,3 +474,4 @@ All of these are coordinator's call 2026-11-18, for review. Details and evidence
 | Store port: a timeout for each call, shorter than the proxy's | Sections 4, 9 | 0016 |
 | Path confusion: conformance dot-segment cases on every host, TLS or a real browser in the suite | Sections 13, 14 | 0016 |
 | E8 answered: no | Section 12 | 0007 |
+| Ports, stores, sealing, policy, audit, Lambda packaging and the reference stand, after atoom 0.2.0 (maintainer decisions 2026-11-20) | Sections 9, 16 | 0017 |

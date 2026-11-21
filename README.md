@@ -27,6 +27,8 @@ Status: design, amended after the first spike. No production code yet; `spike/` 
     - [0014 Installs without AWS](docs/decisions/0014-installs-without-aws.md)
     - [0015 API Gateway: both handlers, HTTP API by default, caching set to zero](docs/decisions/0015-api-gateway-handlers-and-caching.md)
     - [0016 Host adapter rules from the spike](docs/decisions/0016-host-adapter-rules.md)
+  - 2026-11-20, after atoom 0.2.0:
+    - [0017 session is built on atoom: ports, blocks, sealing, policy, audit, Lambda](docs/decisions/0017-atoom-ports-and-blocks.md) (supersedes 0009 and 0014)
 - [Spike findings, 2026-11-18](docs/spike-2026-11-18.md), with the throwaway prototype in [spike/](spike/).
 
 ## Licence

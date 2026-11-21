@@ -1,6 +1,6 @@
 # 0014. Installs without AWS: a DynamoDB table they can reach
 
-Status: proposed, coordinator's call 2026-11-18, for review by the maintainers. Settles design question Q10.
+Status: proposed, coordinator's call 2026-11-18, for review by the maintainers. Settles design question Q10. Superseded by [0017](0017-atoom-ports-and-blocks.md) on 2026-11-20: any atoom store driver that passes the store kit.
 
 ## Context
 
