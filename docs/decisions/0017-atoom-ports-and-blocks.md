@@ -47,7 +47,7 @@ Status: accepted, 2026-11-20 (maintainer decisions S1 A, S2 B, S3, S4' B, S5 A, 
 
 ### Audit (Q3a A, Q3b A, U1 A)
 
-- session emits **security audit** events through atoom's emitter and `transport` port, and never waits on them for a decision: sign-in, logout (local and back-channel), refresh failures, token exchanges, denials. A sign-in completes only after its event is accepted by the transport.
+- session emits **security audit** events through the emitter of `truvity/audit` over atoom's `transport` port, and never waits on them for a decision: sign-in, logout (local and back-channel), refresh failures, token exchanges, denials. A sign-in completes only after its event is accepted by the transport.
 - Allowed requests are **counted as metrics**, not logged one by one.
 - The events go to the **audit writer of the sluis installation** of the environment (the new `truvity/audit` product).
 - When the transport is down, checks keep being answered; dropped events are counted and raise an alert.
@@ -61,11 +61,11 @@ atoom gains a layer of blocks above its ports. A block has a contract like a por
 
 - Every Lambda function of session runs behind the **Lambda Web Adapter**, vendored and pinned in session's own layer. The binary is the same HTTP server on every shape.
 - The authorizer is the open case. The adapter does not list API Gateway authorizer events among the events it supports. The fit spike tests it. If authorizer events do not arrive correctly, the authorizer alone keeps a native Go handler, in the same binary.
-- Layers: the adapter and the configuration (site file, policy bundle). Drivers are in-process, so there is no extension.
+- A function is the app zip, the adapter's layer and one configuration layer (site file, policy bundle). Drivers are in-process, so there is no drivers layer.
 
-### Roman's reference stand (R A, amends 0002)
+### The reference stand of the group SSO design (R A, amends 0002)
 
-`session` stays our own Go service (0002 B). The reference stand of the Group IDP package (Apache with `mod_auth_openidc` and the Go audience broker) is not the implementation. Its code may be reused where it fits:
+`session` stays our own Go service (0002 B). The reference stand of the group's SSO design (Apache with `mod_auth_openidc` and the Go audience broker) is not the implementation. Its code may be reused where it fits:
 
 - the broker's rules (the forgery check, the route allowlist, the exchange per audience and its cache keys, step-up), from `drafts/kit/io-gate`;
 - the browser library `@stand/proxy-client`;
@@ -79,7 +79,7 @@ Its Keycloak findings go into the conformance suite:
 - `id_token_hint` at logout;
 - the reuse of a client assertion at logout.
 
-`session` is the IO auth proxy of the group's ADR 0006, decision 12 (Q-154 answered).
+`session` is the group's browser-session proxy for product fronts.
 
 ## Options considered
 
@@ -94,7 +94,7 @@ Its Keycloak findings go into the conformance suite:
 | Allowed requests | Counted | Logged one by one (volume follows traffic) |
 | Usage | None | Every allowed request as a usage record (a durable write on every request) |
 | Lambda | The Web Adapter on every function; the authorizer after a spike | A native handler for the authorizer from the start |
-| Roman's stand | Our Go service, reusing the stand's code where it fits | The Apache shape packaged for atoom (no authorizer, a C fork for the store and KMS); both behind one contract |
+| The reference stand | Our Go service, reusing the stand's code where it fits | The Apache shape packaged for atoom (no authorizer, a C fork for the store and KMS); both behind one contract |
 
 ## Consequences
 

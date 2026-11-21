@@ -294,7 +294,7 @@ Since 2026-11-20 the core is built on [truvity/atoom](https://github.com/truvity
 | Signing, JWKS, sealing | `key` port and the `keyring` block | `key/awskms`, `key/software` (a key file) |
 | Site file and policy bundle | `source` port | `source/file` (Go) |
 | Who may reach a route | `cedar-go` in-process, loaded by atoom's Cedar loader | The signed policy bundle |
-| Audit events | atoom's emitter and `transport` port | to the sluis audit writer of the environment |
+| Audit events | the emitter of `truvity/audit` over atoom's `transport` port | to the sluis audit writer of the environment |
 
 Every port is called through its generated ConnectRPC client, with the driver mounted in-process. Cedar is the one exception: a library by design (0017).
 
@@ -439,7 +439,7 @@ Revised on 2026-11-20 after atoom 0.2.0 (decision 0017).
 1. Spike, about a week. **Done on 2026-11-18**, see [the findings](spike-2026-11-18.md) and section 17.
 2. Decision 0017: session on atoom. **Done on 2026-11-20.**
 3. Fit spike, about a day: the check core on atoom 0.2.0's `store/dynamodb` and `key` drivers mounted in-process; authorizer events through the Lambda Web Adapter; the same short check in a real AWS account that the first spike could not make (below).
-4. Check core, sign-in handler and Envoy adapters against Keycloak, about four to five days. The broker rules and the browser library come from the Group IDP reference stand where they fit.
+4. Check core, sign-in handler and Envoy adapters against Keycloak, about four to five days. The broker rules and the browser library come from the group SSO reference stand where they fit.
 5. nginx adapter, AWS KMS, the exchange client and the conformance suite (with the stand's scenarios and Keycloak findings), about three to four days. Needs from atoom: `keyring`, the Go `source/file` driver, the Cedar loader with its decision test set, the audit emitter in Go.
 6. First version for the first internal sites.
 7. Lambda: the authorizer and the sign-in handler behind the Lambda Web Adapter, HTTP API first, then REST API.
