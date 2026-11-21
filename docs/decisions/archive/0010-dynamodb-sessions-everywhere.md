@@ -1,6 +1,8 @@
 # 0010. Sessions live in DynamoDB on every shape; Valkey is dropped
 
-Status: accepted, 2026-11-18. Amended by [0017](0017-atoom-ports-and-blocks.md) on 2026-11-20: any atoom store that passes the kit, DynamoDB first; Valkey is no longer dropped.
+> Archived. Kept as history; the current decision is [0006](../0006-built-on-atoom.md). The numbers in this file are those before the clean rewrite of the records (see the [renumbering table](../README.md#renumbering-in-the-clean-rewrite)).
+
+Status: accepted, 2026-11-18. Amended by [0006 (renumbered)](../0006-built-on-atoom.md) on 2026-11-20: any atoom store that passes the kit, DynamoDB first; Valkey is no longer dropped.
 
 ## Context
 
