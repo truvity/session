@@ -1,6 +1,8 @@
 # 0014. Installs without AWS: a DynamoDB table they can reach
 
-Status: proposed, coordinator's call 2026-11-18, for review by the maintainers. Settles design question Q10.
+> Archived. Kept as history; the current decision is [0006](../0006-built-on-atoom.md). The numbers in this file are those before the clean rewrite of the records (see the [renumbering table](../README.md#renumbering-in-the-clean-rewrite)).
+
+Status: proposed, coordinator's call 2026-11-18, for review by the maintainers. Settles design question Q10. Superseded by [0006 (renumbered)](../0006-built-on-atoom.md) on 2026-11-20: any atoom store driver that passes the store kit.
 
 ## Context
 
