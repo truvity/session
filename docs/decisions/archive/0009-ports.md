@@ -1,6 +1,8 @@
 # 0009. Ports shaped like the sluis v2 building blocks
 
-Status: accepted, 2026-11-18 (decision P1, option A). Superseded by [0017](0017-atoom-ports-and-blocks.md) on 2026-11-20: session uses atoom's ports and blocks, not interfaces of its own.
+> Archived. Kept as history; the current decision is [0006](../0006-built-on-atoom.md). The numbers in this file are those before the clean rewrite of the records (see the [renumbering table](../README.md#renumbering-in-the-clean-rewrite)).
+
+Status: accepted, 2026-11-18 (decision P1, option A). Superseded by [0006 (renumbered)](../0006-built-on-atoom.md) on 2026-11-20: session uses atoom's ports and blocks, not interfaces of its own.
 
 ## Context
 
