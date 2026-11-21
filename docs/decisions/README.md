@@ -1,0 +1,58 @@
+# Decision records of session
+
+Each record stands alone: status and date, context, decision, consequences and roads not taken. The [design](../design.md) puts them together and shows how the parts work.
+
+## The records
+
+| Record | Subject |
+| --- | --- |
+| [0001](0001-purpose-scope-and-name.md) | Purpose, scope and name |
+| [0002](0002-own-go-service-and-external-authorisation.md) | Our own Go service, deployed as external authorisation |
+| [0003](0003-repository-contents.md) | Repository contents |
+| [0004](0004-browser-session-contract.md) | The browser session contract (S1 to S8, defaults) |
+| [0005](0005-tokens-per-api-and-issuers.md) | Per-API tokens by token exchange, and the issuers |
+| [0006](0006-built-on-atoom.md) | Built on atoom: ports, drivers, stores and sealing |
+| [0007](0007-policy.md) | Policy: Cedar as a library, with a shared bundle |
+| [0008](0008-audit.md) | Audit: the security class only, never usage |
+| [0009](0009-session-core-block.md) | The session core is a block, built inside session first |
+| [0010](0010-logout-pointer-items.md) | Logout without a secondary index: pointer items and one tombstone read |
+| [0011](0011-host-adapter-rules.md) | Host adapter rules: Envoy, nginx, API Gateway, the store timeout |
+| [0012](0012-lambda.md) | Lambda: every function behind the Web Adapter |
+| [0013](0013-reference-stand.md) | Reuse of the group SSO reference stand |
+
+## How the records are kept
+
+- On 2026-11-21 the records were rewritten once, cleanly, to state the current design and to fold in every amendment. History before that is in git.
+- **From this rewrite on, the records are append-only.** A change to a decision is a new record that supersedes the old one. The old record moves to [archive/](archive/) and keeps its number, with a "superseded by" note. Typos and links may be fixed in place.
+- A record that is accepted but not yet built says what is built and what is planned. "Open:" marks a question nobody has decided.
+
+## Renumbering in the clean rewrite
+
+The records have new numbers. The old numbers appear in the archive, in the [archived spike findings](../archive/spike-2026-11-18.md), and in git history. The archived records `0009`, `0010` and `0014` keep their old numbers and are not the records with the same numbers above.
+
+| Old record | Subject | Now |
+| --- | --- | --- |
+| 0001 | Purpose and scope | 0001 |
+| 0008 | Name | 0001 |
+| 0002 | Our own Go service | 0002 |
+| 0003 | Deployment is external authorisation | 0002 |
+| 0004 | Repository contents | 0003 |
+| 0005 | Browser session behaviour contract | 0004 |
+| 0011 | Defaults accepted | 0004 |
+| 0012 | Answers to the first open questions | 0004 (Q5), 0005 (Q4, Q7, Q9), 0006 (Q2, Q3), 0011 (Q1, Q6, Q8) |
+| 0006 | Per-API tokens by token exchange | 0005 |
+| 0007 | Issuers, and the sluis v1 check | 0005 |
+| 0017 | session is built on atoom | 0006 (ports, stores, sealing), 0007 (policy), 0008 (audit), 0009 (block), 0012 (Lambda), 0013 (reference stand) |
+| 0013 | Logout without a secondary index | 0010 |
+| 0015 | API Gateway handlers and caching | 0011, 0012 |
+| 0016 | Host adapter rules | 0011 |
+| 0009 | Ports shaped like the sluis v2 building blocks | [archived](archive/0009-ports.md), superseded by 0006 |
+| 0010 | Sessions in DynamoDB on every shape | [archived](archive/0010-dynamodb-sessions-everywhere.md), superseded by 0006 |
+| 0014 | Installs without AWS | [archived](archive/0014-installs-without-aws.md), superseded by 0006 |
+
+## Archive
+
+- [0009 Ports shaped like the sluis v2 building blocks](archive/0009-ports.md)
+- [0010 Sessions in DynamoDB on every shape](archive/0010-dynamodb-sessions-everywhere.md)
+- [0014 Installs without AWS](archive/0014-installs-without-aws.md)
+- [Findings of the first spike](../archive/spike-2026-11-18.md) and its [run notes](../archive/spike-2026-11-18-run.md)
