@@ -17,7 +17,8 @@ Status: being built (step 2 of the [plan](docs/design.md#16-status-and-next-step
 | `internal/signin` | The sign-in handler: login (PAR, PKCE, `private_key_jwt` through the key port), callback, logout, back-channel logout, whoami, jwks |
 | `internal/audit` | The stand-in for truvity/audit's emitter: security events as JSON lines |
 | `internal/kctest` | The test Keycloak: realms through the admin API, a browser at the login form |
-| `examples/` | A site file and a policy bundle |
+| `internal/envoy` | The Envoy adapters: gRPC (`envoy.service.auth.v3.Authorization`, preferred) and HTTP external authorisation |
+| `examples/` | A site file and a policy bundle; `envoy/envoy.yaml`, the Envoy configuration the tests run; `envoy-gateway/`, the same rules in Envoy Gateway's API (not run) |
 | `internal/atoomx` | atoom's drivers mounted in this process, called through their generated clients |
 | `internal/localseal` | The stand-in for atoom's `seal` block, behind the core's `Sealer` interface |
 | `internal/policy` | The Cedar route policy ([docs/policy.md](docs/policy.md)) |
@@ -26,7 +27,7 @@ Status: being built (step 2 of the [plan](docs/design.md#16-status-and-next-step
 
 ## Building
 
-Inside `devbox shell` (or `devbox run -- just <recipe>`): `just build`, `just test` (no container), `just test-dynamodb` (the core on atoom's `store/dynamodb` driver against DynamoDB Local), `just test-keycloak` (the sign-in handler against Keycloak 26.8; both in containers pinned by digest and removed at the end), `just lint`, `just vuln`, and `just check` for all of them.
+Inside `devbox shell` (or `devbox run -- just <recipe>`): `just build`, `just test` (no container), `just test-dynamodb` (the core on atoom's `store/dynamodb` driver against DynamoDB Local), `just test-keycloak` (the sign-in handler against Keycloak 26.8), `just test-envoy` (the adapters through Envoy 1.39; all in containers pinned by digest and removed at the end), `just lint`, `just vuln`, and `just check` for all of them.
 
 atoom is pinned to its release 0.3.0 in `go.mod`; an upgrade is a deliberate bump (decision 0006).
 

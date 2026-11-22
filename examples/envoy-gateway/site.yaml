@@ -1,0 +1,53 @@
+# Envoy Gateway in front of one site, asking session over gRPC (decision 0011). NOT RUN: the tested configuration is
+# examples/envoy/envoy.yaml in plain Envoy (just test-envoy); this file states the same rules in Envoy Gateway's API, and must be
+# checked against the Envoy Gateway version an install runs. Names and hosts are examples.
+#
+# - The sign-in prefix /_session/ is its own HTTPRoute with no SecurityPolicy: it runs before a session exists.
+# - Every other path is an HTTPRoute with the SecurityPolicy: the check sees only the headers it needs, and fails closed.
+# - The ClientTrafficPolicy makes the path the check sees the path the router uses.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: docs-session-paths
+spec:
+  parentRefs: [{ name: site-gateway }]
+  hostnames: [docs.example.com]
+  rules:
+  - matches: [{ path: { type: PathPrefix, value: /_session/ } }]
+    backendRefs: [{ name: session, port: 8080 }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: docs-site
+spec:
+  parentRefs: [{ name: site-gateway }]
+  hostnames: [docs.example.com]
+  rules:
+  - matches: [{ path: { type: PathPrefix, value: / } }]
+    backendRefs: [{ name: docs, port: 8080 }]
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: docs-session-check
+spec:
+  targetRefs:
+  - { group: gateway.networking.k8s.io, kind: HTTPRoute, name: docs-site }
+  extAuth:
+    failOpen: false
+    # Without sec-fetch-mode every navigation becomes a 401; without x-requested-with every state-changing request is a CSRF refusal.
+    headersToExtAuth: [cookie, accept, sec-fetch-mode, sec-fetch-site, origin, x-requested-with]
+    grpc:
+      backendRefs: [{ name: session, port: 9001 }]
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: site-gateway-paths
+spec:
+  targetRefs:
+  - { group: gateway.networking.k8s.io, kind: Gateway, name: site-gateway }
+  path:
+    escapedSlashesAction: RejectRequest
+    disableMergeSlashes: false
