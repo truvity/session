@@ -1,6 +1,6 @@
 # 0012. Lambda: every function behind the Web Adapter
 
-Status: accepted
+Status: accepted; its open case (the authorizer) is decided by [0014](0014-authorizer-native-go-handler.md)
 Date: 2026-11-20
 
 ## Context
