@@ -34,9 +34,10 @@ type Keys struct {
 	Stop func()
 }
 
-// SoftwareKeys mounts atoom's key/software driver over a state directory, with the purposes session declares.
-func SoftwareKeys(stateDir string, purposes []purpose.Declaration) (*Keys, error) {
-	svc, err := software.New(software.Options{StateDir: stateDir, Purposes: purposes})
+// SoftwareKeys mounts atoom's key/software driver over a state directory, with the purposes session declares. environment names
+// the installation for the driver's journal (development, staging or production).
+func SoftwareKeys(stateDir string, purposes []purpose.Declaration, environment string) (*Keys, error) {
+	svc, err := software.New(software.Options{StateDir: stateDir, Purposes: purposes, Environment: environment})
 	if err != nil {
 		return nil, err
 	}

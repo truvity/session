@@ -79,3 +79,20 @@ func (c *Core) Emit(ctx context.Context, e Event) {
 func (c *Core) bound(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, c.rules.StoreTimeout)
 }
+
+// EmitAccepted hands a security-audit event to the Auditor and returns its answer. A sign-in completes only after its event is
+// accepted (decision 0008), so the sign-in handler uses this one; a refusal is counted as well.
+func (c *Core) EmitAccepted(ctx context.Context, e Event) error {
+	if e.Time.IsZero() {
+		e.Time = c.now()
+	}
+	e.Site = c.rules.Site
+	err := c.audit.Emit(ctx, e)
+	if err != nil {
+		c.metrics.auditDropped.Add(1)
+	}
+	return err
+}
+
+// Now is the block's clock.
+func (c *Core) Now() time.Time { return c.now() }

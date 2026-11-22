@@ -13,6 +13,11 @@ Status: being built (step 2 of the [plan](docs/design.md#16-status-and-next-step
 | Path | Content |
 | --- | --- |
 | `core/` | The session core: records, cookie, idle and absolute expiry, logout pointers and tombstones, the check |
+| `cmd/session` | The service: `session serve`, `session check --site FILE`, `session seal-root FILE` |
+| `internal/signin` | The sign-in handler: login (PAR, PKCE, `private_key_jwt` through the key port), callback, logout, back-channel logout, whoami, jwks |
+| `internal/audit` | The stand-in for truvity/audit's emitter: security events as JSON lines |
+| `internal/kctest` | The test Keycloak: realms through the admin API, a browser at the login form |
+| `examples/` | A site file and a policy bundle |
 | `internal/atoomx` | atoom's drivers mounted in this process, called through their generated clients |
 | `internal/localseal` | The stand-in for atoom's `seal` block, behind the core's `Sealer` interface |
 | `internal/policy` | The Cedar route policy ([docs/policy.md](docs/policy.md)) |
@@ -21,7 +26,7 @@ Status: being built (step 2 of the [plan](docs/design.md#16-status-and-next-step
 
 ## Building
 
-Inside `devbox shell` (or `devbox run -- just <recipe>`): `just build`, `just test` (no container), `just test-dynamodb` (the core on atoom's `store/dynamodb` driver against DynamoDB Local, in a container pinned by digest and removed at the end), `just lint`, `just vuln`, and `just check` for all of them.
+Inside `devbox shell` (or `devbox run -- just <recipe>`): `just build`, `just test` (no container), `just test-dynamodb` (the core on atoom's `store/dynamodb` driver against DynamoDB Local), `just test-keycloak` (the sign-in handler against Keycloak 26.8; both in containers pinned by digest and removed at the end), `just lint`, `just vuln`, and `just check` for all of them.
 
 atoom is pinned to its release 0.3.0 in `go.mod`; an upgrade is a deliberate bump (decision 0006).
 
