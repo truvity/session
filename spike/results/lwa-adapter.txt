@@ -2,12 +2,12 @@
 HTTP/1.1 200 OK
 Content-Type: text/plain; charset=utf-8
 --- answer body:
-{"statusCode":200,"headers":{},"multiValueHeaders":{"content-type":["application/json"],"date":["Sun, 22 Nov 2026 09:05:04 GMT"],"content-length":["63"]},"body":"{\"seen_as\":\"http\",\"note\":\"this app answered as an HTTP server\"}","isBase64Encoded":false}
+{"statusCode":200,"headers":{},"multiValueHeaders":{"content-type":["application/json"],"date":["Sun, 22 Nov 2026 09:21:17 GMT"],"content-length":["63"]},"body":"{\"seen_as\":\"http\",\"note\":\"this app answered as an HTTP server\"}","isBase64Encoded":false}
 === REST API REQUEST authorizer event, no session
 HTTP/1.1 200 OK
 Content-Type: text/plain; charset=utf-8
 --- answer body:
-{"statusCode":200,"headers":{},"multiValueHeaders":{"content-type":["application/json"],"date":["Sun, 22 Nov 2026 09:05:04 GMT"],"content-length":["63"]},"body":"{\"seen_as\":\"http\",\"note\":\"this app answered as an HTTP server\"}","isBase64Encoded":false}
+{"statusCode":200,"headers":{},"multiValueHeaders":{"content-type":["application/json"],"date":["Sun, 22 Nov 2026 09:21:17 GMT"],"content-length":["63"]},"body":"{\"seen_as\":\"http\",\"note\":\"this app answered as an HTTP server\"}","isBase64Encoded":false}
 === HTTP API 2.0 authorizer event, valid session
 HTTP/1.1 200 OK
 Content-Type: text/plain; charset=utf-8
@@ -27,12 +27,12 @@ Content-Type: text/plain; charset=utf-8
 HTTP/1.1 200 OK
 Content-Type: text/plain; charset=utf-8
 --- answer body:
-{"statusCode":200,"headers":{},"multiValueHeaders":{"content-type":["application/json"],"date":["Sun, 22 Nov 2026 09:05:04 GMT"],"content-length":["63"]},"body":"{\"seen_as\":\"http\",\"note\":\"this app answered as an HTTP server\"}","isBase64Encoded":false}
+{"statusCode":200,"headers":{},"multiValueHeaders":{"content-type":["application/json"],"date":["Sun, 22 Nov 2026 09:21:17 GMT"],"content-length":["63"]},"body":"{\"seen_as\":\"http\",\"note\":\"this app answered as an HTTP server\"}","isBase64Encoded":false}
 === HTTP API 2.0 event WITHOUT identitySource, valid
 HTTP/1.1 200 OK
 Content-Type: text/plain; charset=utf-8
 --- answer body:
-{"statusCode":200,"headers":{"content-type":"application/json","date":"Sun, 22 Nov 2026 09:05:04 GMT","content-length":"63"},"multiValueHeaders":{},"body":"{\"seen_as\":\"http\",\"note\":\"this app answered as an HTTP server\"}","isBase64Encoded":false,"cookies":[]}
+{"statusCode":200,"headers":{"content-type":"application/json","date":"Sun, 22 Nov 2026 09:21:17 GMT","content-length":"63"},"multiValueHeaders":{},"body":"{\"seen_as\":\"http\",\"note\":\"this app answered as an HTTP server\"}","isBase64Encoded":false,"cookies":[]}
 === HTTP API 2.0 event with an EMPTY identitySource
 HTTP/1.1 200 OK
 Content-Type: text/plain; charset=utf-8
@@ -49,45 +49,45 @@ Content-Type: text/plain; charset=utf-8
 --- answer body:
 {"note":"not an authorizer event","ok":true}
 === app log
-START RequestId: 87214723-68e6-433b-85a4-b841b35f87e0 Version: $LATEST
-Nov 2026 09:05:04,371 [INFO] (rapid) INIT START(type: on-demand, phase: init)
+START RequestId: 94571a33-e695-474d-b6bf-3504c9d54212 Version: $LATEST
+Nov 2026 09:21:17,237 [INFO] (rapid) INIT START(type: on-demand, phase: init)
 fitapp up on :8000
-Nov 2026 09:05:04,385 [INFO] (rapid) INVOKE START(requestId: 87214723-68e6-433b-85a4-b841b35f87e0)
-REQ {"body":"","body_bytes":0,"headers":{"Cookie":"__Host-spike=sess-ok; theme=dark","X-Amzn-Lambda-Context":"{\"request_id\":\"87214723-68e6-433b-85a4-b841b35f87e0\",\"deadline\":1795338604371,\"invoked_function_arn\":\"arn:aws:lambda:us-east-1:000000000000:function:test_functi...","X-Amzn-Request-Context":"{\"accountId\":\"000000000000\",\"resourceId\":\"r1\",\"stage\":\"prod\",\"domainName\":null,\"domainPrefix\":null,\"requestId\":\"req-1\",\"protocol\":null,\"identity\":{\"cognitoIdent..."},"method":"GET","seen_as":"http","uri":"/app/x?a=1"}
-END RequestId: 87214723-68e6-433b-85a4-b841b35f87e0
-START RequestId: 5203ad92-86be-45c1-bf39-5b4945977161 Version: $LATEST
-Nov 2026 09:05:04,391 [INFO] (rapid) INVOKE START(requestId: 5203ad92-86be-45c1-bf39-5b4945977161)
-REQ {"body":"","body_bytes":0,"headers":{"Cookie":"__Host-spike=nope; theme=dark","X-Amzn-Lambda-Context":"{\"request_id\":\"5203ad92-86be-45c1-bf39-5b4945977161\",\"deadline\":1795338604391,\"invoked_function_arn\":\"arn:aws:lambda:us-east-1:000000000000:function:test_functi...","X-Amzn-Request-Context":"{\"accountId\":\"000000000000\",\"resourceId\":\"r1\",\"stage\":\"prod\",\"domainName\":null,\"domainPrefix\":null,\"requestId\":\"req-1\",\"protocol\":null,\"identity\":{\"cognitoIdent..."},"method":"GET","seen_as":"http","uri":"/app/x?a=1"}
-END RequestId: 5203ad92-86be-45c1-bf39-5b4945977161
-START RequestId: 5442676e-dce9-48f8-a3c5-60bdfb4f3124 Version: $LATEST
-Nov 2026 09:05:04,396 [INFO] (rapid) INVOKE START(requestId: 5442676e-dce9-48f8-a3c5-60bdfb4f3124)
-REQ {"body":"{\n  \"version\": \"2.0\",\n  \"type\": \"REQUEST\",\n  \"routeArn\": \"arn:aws:execute-api:eu-west-1:000000000000:api123/$default/GET...","body_bytes":872,"headers":{"Content-Type":"application/json","X-Amzn-Lambda-Context":"{\"request_id\":\"5442676e-dce9-48f8-a3c5-60bdfb4f3124\",\"deadline\":1795338604396,\"invoked_function_arn\":\"arn:aws:lambda:us-east-1:000000000000:function:test_functi...","X-Amzn-Request-Context":"null"},"method":"POST","seen_as":"pass-through","uri":"/events"}
-END RequestId: 5442676e-dce9-48f8-a3c5-60bdfb4f3124
-START RequestId: 51e54a32-8d91-4019-928e-9285a6afc611 Version: $LATEST
-Nov 2026 09:05:04,402 [INFO] (rapid) INVOKE START(requestId: 51e54a32-8d91-4019-928e-9285a6afc611)
-REQ {"body":"{\n  \"version\": \"2.0\",\n  \"type\": \"REQUEST\",\n  \"routeArn\": \"arn:aws:execute-api:eu-west-1:000000000000:api123/$default/GET...","body_bytes":866,"headers":{"Content-Type":"application/json","X-Amzn-Lambda-Context":"{\"request_id\":\"51e54a32-8d91-4019-928e-9285a6afc611\",\"deadline\":1795338604402,\"invoked_function_arn\":\"arn:aws:lambda:us-east-1:000000000000:function:test_functi...","X-Amzn-Request-Context":"null"},"method":"POST","seen_as":"pass-through","uri":"/events"}
-END RequestId: 51e54a32-8d91-4019-928e-9285a6afc611
-START RequestId: 26e7e0a9-5010-4fda-9fa2-df40923a2f57 Version: $LATEST
-Nov 2026 09:05:04,407 [INFO] (rapid) INVOKE START(requestId: 26e7e0a9-5010-4fda-9fa2-df40923a2f57)
-REQ {"body":"{\n  \"version\": \"2.0\",\n  \"type\": \"REQUEST\",\n  \"routeArn\": \"arn:aws:execute-api:eu-west-1:000000000000:api123/$default/GET...","body_bytes":866,"headers":{"Content-Type":"application/json","X-Amzn-Lambda-Context":"{\"request_id\":\"26e7e0a9-5010-4fda-9fa2-df40923a2f57\",\"deadline\":1795338604407,\"invoked_function_arn\":\"arn:aws:lambda:us-east-1:000000000000:function:test_functi...","X-Amzn-Request-Context":"null"},"method":"POST","seen_as":"pass-through","uri":"/events"}
-END RequestId: 26e7e0a9-5010-4fda-9fa2-df40923a2f57
-START RequestId: 21eaacc7-d036-4b53-ad4f-476baa87a476 Version: $LATEST
-Nov 2026 09:05:04,413 [INFO] (rapid) INVOKE START(requestId: 21eaacc7-d036-4b53-ad4f-476baa87a476)
-REQ {"body":"","body_bytes":0,"headers":{"Cookie":"__Host-spike=boom; theme=dark","X-Amzn-Lambda-Context":"{\"request_id\":\"21eaacc7-d036-4b53-ad4f-476baa87a476\",\"deadline\":1795338604413,\"invoked_function_arn\":\"arn:aws:lambda:us-east-1:000000000000:function:test_functi...","X-Amzn-Request-Context":"{\"accountId\":\"000000000000\",\"resourceId\":\"r1\",\"stage\":\"prod\",\"domainName\":null,\"domainPrefix\":null,\"requestId\":\"req-1\",\"protocol\":null,\"identity\":{\"cognitoIdent..."},"method":"GET","seen_as":"http","uri":"/app/x?a=1"}
-END RequestId: 21eaacc7-d036-4b53-ad4f-476baa87a476
-START RequestId: edcc76d5-6de7-4c04-95b7-99d6bce6d0bf Version: $LATEST
-Nov 2026 09:05:04,418 [INFO] (rapid) INVOKE START(requestId: edcc76d5-6de7-4c04-95b7-99d6bce6d0bf)
-REQ {"body":"","body_bytes":0,"headers":{"Cookie":"__Host-spike=sess-ok; theme=dark","X-Amzn-Lambda-Context":"{\"request_id\":\"edcc76d5-6de7-4c04-95b7-99d6bce6d0bf\",\"deadline\":1795338604418,\"invoked_function_arn\":\"arn:aws:lambda:us-east-1:000000000000:function:test_functi...","X-Amzn-Request-Context":"{\"routeKey\":\"$default\",\"accountId\":\"000000000000\",\"stage\":\"$default\",\"requestId\":\"req-2\",\"apiId\":\"api123\",\"domainName\":\"x.example.test\",\"domainPrefix\":\"x\",\"time..."},"method":"GET","seen_as":"http","uri":"/app/x?a=1"}
-END RequestId: edcc76d5-6de7-4c04-95b7-99d6bce6d0bf
-START RequestId: cbf91780-bf16-431d-9295-732edbd66d76 Version: $LATEST
-Nov 2026 09:05:04,422 [INFO] (rapid) INVOKE START(requestId: cbf91780-bf16-431d-9295-732edbd66d76)
-REQ {"body":"{\n  \"version\": \"2.0\",\n  \"type\": \"REQUEST\",\n  \"routeArn\": \"arn:aws:execute-api:eu-west-1:000000000000:api123/$default/GET...","body_bytes":950,"headers":{"Content-Type":"application/json","X-Amzn-Lambda-Context":"{\"request_id\":\"cbf91780-bf16-431d-9295-732edbd66d76\",\"deadline\":1795338604422,\"invoked_function_arn\":\"arn:aws:lambda:us-east-1:000000000000:function:test_functi...","X-Amzn-Request-Context":"null"},"method":"POST","seen_as":"pass-through","uri":"/events"}
-END RequestId: cbf91780-bf16-431d-9295-732edbd66d76
-START RequestId: 250ccc41-efa5-400b-be3f-6d0b07563bbf Version: $LATEST
-Nov 2026 09:05:04,427 [INFO] (rapid) INVOKE START(requestId: 250ccc41-efa5-400b-be3f-6d0b07563bbf)
-REQ {"body":"{\"type\": \"TOKEN\", \"authorizationToken\": \"Bearer abc\", \"methodArn\": \"arn:aws:execute-api:eu-west-1:000000000000:api123/pr...","body_bytes":134,"headers":{"Content-Type":"application/json","X-Amzn-Lambda-Context":"{\"request_id\":\"250ccc41-efa5-400b-be3f-6d0b07563bbf\",\"deadline\":1795338604427,\"invoked_function_arn\":\"arn:aws:lambda:us-east-1:000000000000:function:test_functi...","X-Amzn-Request-Context":"null"},"method":"POST","seen_as":"pass-through","uri":"/events"}
-END RequestId: 250ccc41-efa5-400b-be3f-6d0b07563bbf
-START RequestId: dc31a956-f0f3-4990-8fbf-94ad81f97aff Version: $LATEST
-Nov 2026 09:05:04,432 [INFO] (rapid) INVOKE START(requestId: dc31a956-f0f3-4990-8fbf-94ad81f97aff)
-REQ {"body":"{\"hello\":\"world\"}","body_bytes":17,"headers":{"Content-Type":"application/json","X-Amzn-Lambda-Context":"{\"request_id\":\"dc31a956-f0f3-4990-8fbf-94ad81f97aff\",\"deadline\":1795338604432,\"invoked_function_arn\":\"arn:aws:lambda:us-east-1:000000000000:function:test_functi...","X-Amzn-Request-Context":"null"},"method":"POST","seen_as":"pass-through","uri":"/events"}
-END RequestId: dc31a956-f0f3-4990-8fbf-94ad81f97aff
+Nov 2026 09:21:17,250 [INFO] (rapid) INVOKE START(requestId: 94571a33-e695-474d-b6bf-3504c9d54212)
+REQ {"body_bytes":0,"event":"","has_cookie_header":true,"has_x_amzn_lambda_context":true,"has_x_amzn_request_context":true,"method":"GET","path":"/app/x","query_bytes":3,"seen_as":"http","x_amzn_request_context_is_null":false}
+END RequestId: 94571a33-e695-474d-b6bf-3504c9d54212
+START RequestId: faca987b-2be0-4002-a530-5d36a796bd28 Version: $LATEST
+Nov 2026 09:21:17,257 [INFO] (rapid) INVOKE START(requestId: faca987b-2be0-4002-a530-5d36a796bd28)
+REQ {"body_bytes":0,"event":"","has_cookie_header":true,"has_x_amzn_lambda_context":true,"has_x_amzn_request_context":true,"method":"GET","path":"/app/x","query_bytes":3,"seen_as":"http","x_amzn_request_context_is_null":false}
+END RequestId: faca987b-2be0-4002-a530-5d36a796bd28
+START RequestId: ddb6c137-6b8c-4961-b703-522cb7dd8676 Version: $LATEST
+Nov 2026 09:21:17,262 [INFO] (rapid) INVOKE START(requestId: ddb6c137-6b8c-4961-b703-522cb7dd8676)
+REQ {"body_bytes":872,"event":"type=REQUEST version=2.0","has_cookie_header":false,"has_x_amzn_lambda_context":true,"has_x_amzn_request_context":true,"method":"POST","path":"/events","query_bytes":0,"seen_as":"pass-through","x_amzn_request_context_is_null":true}
+END RequestId: ddb6c137-6b8c-4961-b703-522cb7dd8676
+START RequestId: af72cd84-6b7f-4636-8714-b55a0764dedc Version: $LATEST
+Nov 2026 09:21:17,268 [INFO] (rapid) INVOKE START(requestId: af72cd84-6b7f-4636-8714-b55a0764dedc)
+REQ {"body_bytes":866,"event":"type=REQUEST version=2.0","has_cookie_header":false,"has_x_amzn_lambda_context":true,"has_x_amzn_request_context":true,"method":"POST","path":"/events","query_bytes":0,"seen_as":"pass-through","x_amzn_request_context_is_null":true}
+END RequestId: af72cd84-6b7f-4636-8714-b55a0764dedc
+START RequestId: 7cd28058-4058-46b8-bfc6-8247a7d698d8 Version: $LATEST
+Nov 2026 09:21:17,273 [INFO] (rapid) INVOKE START(requestId: 7cd28058-4058-46b8-bfc6-8247a7d698d8)
+REQ {"body_bytes":866,"event":"type=REQUEST version=2.0","has_cookie_header":false,"has_x_amzn_lambda_context":true,"has_x_amzn_request_context":true,"method":"POST","path":"/events","query_bytes":0,"seen_as":"pass-through","x_amzn_request_context_is_null":true}
+END RequestId: 7cd28058-4058-46b8-bfc6-8247a7d698d8
+START RequestId: 3fd7afaa-88e4-4cb4-91fe-93fabd10acc5 Version: $LATEST
+Nov 2026 09:21:17,279 [INFO] (rapid) INVOKE START(requestId: 3fd7afaa-88e4-4cb4-91fe-93fabd10acc5)
+REQ {"body_bytes":0,"event":"","has_cookie_header":true,"has_x_amzn_lambda_context":true,"has_x_amzn_request_context":true,"method":"GET","path":"/app/x","query_bytes":3,"seen_as":"http","x_amzn_request_context_is_null":false}
+END RequestId: 3fd7afaa-88e4-4cb4-91fe-93fabd10acc5
+START RequestId: 434b7086-9dc3-447c-842f-f5b90bf801cf Version: $LATEST
+Nov 2026 09:21:17,285 [INFO] (rapid) INVOKE START(requestId: 434b7086-9dc3-447c-842f-f5b90bf801cf)
+REQ {"body_bytes":0,"event":"","has_cookie_header":true,"has_x_amzn_lambda_context":true,"has_x_amzn_request_context":true,"method":"GET","path":"/app/x","query_bytes":3,"seen_as":"http","x_amzn_request_context_is_null":false}
+END RequestId: 434b7086-9dc3-447c-842f-f5b90bf801cf
+START RequestId: 6ebf1cea-24ee-4d25-bb89-1efde88c45d9 Version: $LATEST
+Nov 2026 09:21:17,290 [INFO] (rapid) INVOKE START(requestId: 6ebf1cea-24ee-4d25-bb89-1efde88c45d9)
+REQ {"body_bytes":950,"event":"type=REQUEST version=2.0","has_cookie_header":false,"has_x_amzn_lambda_context":true,"has_x_amzn_request_context":true,"method":"POST","path":"/events","query_bytes":0,"seen_as":"pass-through","x_amzn_request_context_is_null":true}
+END RequestId: 6ebf1cea-24ee-4d25-bb89-1efde88c45d9
+START RequestId: d8756bf9-0b97-4338-bbc3-043b19a70e1f Version: $LATEST
+Nov 2026 09:21:17,295 [INFO] (rapid) INVOKE START(requestId: d8756bf9-0b97-4338-bbc3-043b19a70e1f)
+REQ {"body_bytes":134,"event":"type=TOKEN version=","has_cookie_header":false,"has_x_amzn_lambda_context":true,"has_x_amzn_request_context":true,"method":"POST","path":"/events","query_bytes":0,"seen_as":"pass-through","x_amzn_request_context_is_null":true}
+END RequestId: d8756bf9-0b97-4338-bbc3-043b19a70e1f
+START RequestId: 160fae58-39ee-461b-a065-85fa665cea55 Version: $LATEST
+Nov 2026 09:21:17,300 [INFO] (rapid) INVOKE START(requestId: 160fae58-39ee-461b-a065-85fa665cea55)
+REQ {"body_bytes":17,"event":"type= version=","has_cookie_header":false,"has_x_amzn_lambda_context":true,"has_x_amzn_request_context":true,"method":"POST","path":"/events","query_bytes":0,"seen_as":"pass-through","x_amzn_request_context_is_null":true}
+END RequestId: 160fae58-39ee-461b-a065-85fa665cea55
