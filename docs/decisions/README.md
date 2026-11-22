@@ -19,6 +19,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0011](0011-host-adapter-rules.md) | Host adapter rules: Envoy, nginx, API Gateway, the store timeout |
 | [0012](0012-lambda.md) | Lambda: every function behind the Web Adapter |
 | [0013](0013-reference-stand.md) | Reuse of the group SSO reference stand |
+| [0014](0014-authorizer-native-go-handler.md) | The authorizer is a native Go handler |
 
 ## How the records are kept
 

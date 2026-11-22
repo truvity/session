@@ -95,7 +95,7 @@ Hosts:
 | nginx | `auth_request` with `auth_request_set` | Self-hosted installs. A 401 with markers, `$uri$is_args$args`, 500 on failure |
 | AWS API Gateway | Lambda authorizer, for both the REST API and the HTTP API (payload 2.0). The docs default to the HTTP API | Cannot redirect, cannot set or remove headers, cannot send `Set-Cookie`. The authorizer cache is set to 0. Stripping is the integration's parameter mapping. The HTTP API cannot map `Authorization`, so the per-API token uses `X-Session-Token` |
 
-The rules for each host, and the reasons, are in [0011](decisions/0011-host-adapter-rules.md). Every Lambda function runs behind the Web Adapter, and the authorizer case is tested in the fit spike ([0012](decisions/0012-lambda.md)).
+The rules for each host, and the reasons, are in [0011](decisions/0011-host-adapter-rules.md). Every Lambda function runs behind the Web Adapter ([0012](decisions/0012-lambda.md)), except the authorizer, which is a native Go handler in the same binary ([0014](decisions/0014-authorizer-native-go-handler.md)).
 
 The in-path mode is a plain reverse proxy that runs the same check, then forwards the request. It costs a hop, so it is for sites where that is fine.
 
@@ -441,7 +441,8 @@ The conformance suite drives a headless browser through the real flows: sign-in,
 | The session core as a block | [0009](decisions/0009-session-core-block.md) |
 | Logout: pointer items and tombstones | [0010](decisions/0010-logout-pointer-items.md) |
 | Host adapter rules, API Gateway handlers and caching | [0011](decisions/0011-host-adapter-rules.md) |
-| Lambda: the Web Adapter, layers, the authorizer | [0012](decisions/0012-lambda.md) |
+| Lambda: the Web Adapter, layers | [0012](decisions/0012-lambda.md) |
+| The authorizer is a native Go handler | [0014](decisions/0014-authorizer-native-go-handler.md) |
 | The group SSO reference stand | [0013](decisions/0013-reference-stand.md) |
 
 ## 16. Status and next steps
@@ -456,7 +457,7 @@ Planned, in order:
 2. **Check core, sign-in handler and Envoy adapters** against Keycloak, about four to five days. The broker rules and the browser library come from the group SSO reference stand where they fit.
 3. **nginx adapter, AWS KMS, the exchange client and the conformance suite**, with the stand's scenarios and Keycloak findings, about three to four days. It needs from atoom: the `seal` block, the Go `source/file` driver, the Cedar loader with its decision test set and the durability field; and from `truvity/audit`, the emitter in Go.
 4. **First version** for the first sites.
-5. **Lambda:** the authorizer and the sign-in handler behind the Web Adapter, HTTP API first, then REST API.
+5. **Lambda:** the sign-in handler behind the Web Adapter and the authorizer as a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)), HTTP API first, then REST API.
 6. **sluis v2 as an issuer** once PAR and `private_key_jwt` land there. Sites on sluis v1 wait for v2.
 7. **The session core moves into atoom** when sluis's sign-in actor adopts it.
 
@@ -467,5 +468,5 @@ Not decided. The first spike could not settle them without a real AWS account, o
 1. Items from the AWS documentation that were not run in a real account: the HTTP API status for `isAuthorized: false`, the HTTP API default cache TTL, and integration parameter mapping with `$context.authorizer.*` (including the non-reserved token header).
 2. Real DynamoDB latency from the target region for the one strongly consistent read of each check, to confirm or reverse "no local cache". The first spike measured DynamoDB Local only.
 3. Whether the sluis v2 token exchange takes the access token of a confidential `private_key_jwt` client as subject token (a request to the sluis v2 owners).
-4. Whether API Gateway authorizer events arrive correctly through the Lambda Web Adapter. If not, the authorizer alone keeps a native Go handler ([0012](decisions/0012-lambda.md)).
+4. Decided: authorizer events do not go through the Lambda Web Adapter; the authorizer is a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)).
 5. What a sign-in does while the audit transport is down ([0008](decisions/0008-audit.md)).
