@@ -34,7 +34,7 @@ atoom is pinned to its release 0.3.0 in `go.mod`; an upgrade is a deliberate bum
 ## Documents
 
 - [Design](docs/design.md): purpose, behaviour contract, flows, the use of atoom, site file, repository contents, threat model, next steps and open questions.
-- [Decision records](docs/decisions/README.md): 13 records, one for each subject, with the table that maps the old numbers.
+- [Decision records](docs/decisions/README.md): 15 records, one for each subject, with the table that maps the old numbers.
 - [Fit spike](docs/spike-2026-11-22.md): the check core on atoom drivers in-process, authorizer events through the Lambda Web Adapter, and the script for the real-AWS checks.
 - [Archive](docs/archive/): the findings of the first spike and its run notes. Superseded records are in [docs/decisions/archive](docs/decisions/archive/).
 - [spike/](spike/): the throwaway prototype of the first spike and the code of the fit spike.

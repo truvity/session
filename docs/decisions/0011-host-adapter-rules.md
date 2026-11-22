@@ -1,6 +1,6 @@
 # 0011. Host adapter rules: Envoy, nginx, API Gateway and the store timeout
 
-Status: accepted
+Status: accepted, partly superseded by [0015](0015-envoy-http-mode-csrf-header-and-step-2-choices.md) (Envoy HTTP mode removes headers; `allowed_headers` includes `x-requested-with`)
 Date: 2026-11-21
 
 ## Context

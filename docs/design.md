@@ -91,7 +91,7 @@ Hosts:
 
 | Host | How it asks | Notes |
 | --- | --- | --- |
-| Envoy Gateway | `SecurityPolicy` with external authorisation. gRPC mode is preferred, HTTP mode is documented | Header removal, `allowed_headers`, path normalisation, per-route disable |
+| Envoy Gateway | `SecurityPolicy` with external authorisation. gRPC mode is preferred, HTTP mode is documented | Header removal (`headers_to_remove` in gRPC, `x-envoy-auth-headers-to-remove` in HTTP), `allowed_headers` with `x-requested-with`, path normalisation, per-route disable ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)) |
 | nginx | `auth_request` with `auth_request_set` | Self-hosted installs. A 401 with markers, `$uri$is_args$args`, 500 on failure |
 | AWS API Gateway | Lambda authorizer, for both the REST API and the HTTP API (payload 2.0). The docs default to the HTTP API | Cannot redirect, cannot set or remove headers, cannot send `Set-Cookie`. The authorizer cache is set to 0. Stripping is the integration's parameter mapping. The HTTP API cannot map `Authorization`, so the per-API token uses `X-Session-Token` |
 
@@ -109,7 +109,7 @@ These are the rules every host gets. They do not depend on the proxy ([0004](dec
 | S2 | Sessions live on the server, sealed, in an atoom store driver. Each site has an idle and a maximum lifetime |
 | S3 | Sign-in uses authorisation code with PKCE, always. PAR and `private_key_jwt` are used |
 | S4 | Page without session: redirect to sign-in. API call: JSON 401. The API Gateway authorizer cannot redirect, so it returns the error `Unauthorized` (401, never a deny policy) and the browser helper starts sign-in. nginx makes the redirect and the 401 body itself from a marker in the check's 401 |
-| S5 | State-changing requests need CSRF protection: a custom header plus `Origin` and `Sec-Fetch-Site` checks. Headers only |
+| S5 | State-changing requests need CSRF protection: the header `X-Requested-With: XMLHttpRequest` plus `Origin` and `Sec-Fetch-Site` checks. Headers only ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)) |
 | S6 | Logout is a POST with CSRF, then the issuer's end-session. Back-channel logout deletes the session on all replicas |
 | S8 | The browser's `Authorization`, cookies and identity headers are stripped. In external authorisation the host strips and the allow answer sets them (section 4) |
 
@@ -140,7 +140,7 @@ Idle time is refreshed at most once a minute, to keep writes down. The default l
 | --- | --- | --- |
 | `/_session/login` | GET | Start sign-in. `return_to` must be a relative path of the same site |
 | `/_session/callback` | GET | Receive the code from the issuer |
-| `/_session/logout` | POST | End the session. Needs CSRF headers |
+| `/_session/logout` | POST | End the session. Needs CSRF headers. Answers `200 {"logout_url"}` to a request that accepts JSON, else `303` to the issuer's end-session ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)) |
 | `/_session/backchannel-logout` | POST | Called by the issuer |
 | `/_session/whoami` | GET | JSON: subject, name, groups, session expiry |
 | `/_session/jwks` | GET | Public keys of the service, for apps that verify the signed identity header |
@@ -229,7 +229,7 @@ The records are [0005](decisions/0005-tokens-per-api-and-issuers.md).
 
 ## 8. Logout
 
-The person's own logout is simple: a POST with CSRF headers deletes the session, clears the cookie and redirects to the issuer's end-session.
+The person's own logout is simple: a POST with CSRF headers deletes the session, clears the cookie and sends the browser to the issuer's end-session with `id_token_hint`: as JSON `{"logout_url"}` for the browser helper's `fetch`, as a `303` otherwise ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)).
 
 Logout started at the issuer arrives by back-channel logout. The issuer posts to any replica. All replicas share the store, so deleting there is enough.
 
@@ -313,7 +313,7 @@ The signed policy bundle is read through the `source` port. The loading rules (s
 
 ### Audit
 
-`session` emits security-audit events for sign-ins, logouts, refresh failures, token exchanges and denials. A check never waits on them. A sign-in completes only after its event is accepted by the transport. When the transport is down, checks keep being answered, and dropped events are counted and raise an alert. Allowed requests are counted as metrics. Usage and billing records are never emitted ([0008](decisions/0008-audit.md)).
+`session` emits security-audit events for sign-ins, logouts, refresh failures, token exchanges and denials. A check never waits on them. A sign-in completes only after its event is accepted by the transport; while the transport is down, a sign-in fails closed with 503 in the first version ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)). When the transport is down, checks keep being answered, and dropped events are counted and raise an alert. Allowed requests are counted as metrics. Usage and billing records are never emitted ([0008](decisions/0008-audit.md)).
 
 ## 10. Site configuration
 
@@ -363,7 +363,7 @@ routes:
 | `exchange` | `Authorization: Bearer` with the token for the audience (`X-Session-Token` on the API Gateway HTTP API) |
 | `identity-header` | A signed identity header |
 
-Routes are matched in order. The first match wins. The check matches on the normalised path, and the host proxy must route on the same normalised path (see the threat model). On Lambda the site file and the policy bundle are the configuration layer ([0012](decisions/0012-lambda.md)). Which store and key drivers run is a start-up setting, not part of the site file.
+Routes are matched in order. The first match wins; a path that matches no route is a 404 `no_route`. In this version the modes `exchange` and `identity-header` are refused at start, until step 3 ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)). The site file is read through the `source` port as the document `site` (the file `site.jws`), the policy bundle as `policy-bundle` (`policy-bundle.jws`). The check matches on the normalised path, and the host proxy must route on the same normalised path (see the threat model). On Lambda the site file and the policy bundle are the configuration layer ([0012](decisions/0012-lambda.md)). Which store and key drivers run is a start-up setting, not part of the site file.
 
 ## 11. Repository contents
 
@@ -469,4 +469,4 @@ Not decided. The first spike could not settle them without a real AWS account, o
 2. Real DynamoDB latency from the target region for the one strongly consistent read of each check, to confirm or reverse "no local cache". The first spike measured DynamoDB Local only.
 3. Whether the sluis v2 token exchange takes the access token of a confidential `private_key_jwt` client as subject token (a request to the sluis v2 owners).
 4. Decided: authorizer events do not go through the Lambda Web Adapter; the authorizer is a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)).
-5. What a sign-in does while the audit transport is down ([0008](decisions/0008-audit.md)).
+5. Decided: a sign-in fails closed while the audit transport is down, in the first version ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)).

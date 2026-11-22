@@ -20,6 +20,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0012](0012-lambda.md) | Lambda: every function behind the Web Adapter |
 | [0013](0013-reference-stand.md) | Reuse of the group SSO reference stand |
 | [0014](0014-authorizer-native-go-handler.md) | The authorizer is a native Go handler |
+| [0015](0015-envoy-http-mode-csrf-header-and-step-2-choices.md) | Envoy HTTP mode and the CSRF header; the choices of step 2 (partly supersedes 0011) |
 
 ## How the records are kept
 
