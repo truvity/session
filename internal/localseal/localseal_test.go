@@ -36,6 +36,9 @@ func TestSealOpenMac(t *testing.T) {
 	if _, err := s.Seal(ctx, "c", nil, nil); err == nil {
 		t.Fatal("an undeclared purpose sealed")
 	}
+	if _, err := s.Seal(ctx, "a", nil, make([]byte, localseal.MaxPlaintext+1)); err == nil {
+		t.Fatal("an oversized value was sealed")
+	}
 	ma, _ := s.Mac(ctx, "a", []byte("x"))
 	mb, _ := s.Mac(ctx, "b", []byte("x"))
 	ma2, _ := s.Mac(ctx, "a", []byte("x"))

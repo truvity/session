@@ -25,6 +25,9 @@ import (
 // RootLen is the length of the root key: 256 bits.
 const RootLen = 32
 
+// MaxPlaintext bounds what one Seal takes: a session record is a few kilobytes, and a store item is at most 380 KiB.
+const MaxPlaintext = 1 << 20
+
 // format is the first byte of a sealed value, so that the seal block's envelope can be told apart later.
 const format = 1
 
@@ -100,6 +103,9 @@ func (s *Sealer) Seal(_ context.Context, purpose string, aad, plaintext []byte) 
 	aead, ok := s.aeads[purpose]
 	if !ok {
 		return nil, errPurpose
+	}
+	if len(plaintext) > MaxPlaintext {
+		return nil, errors.New("localseal: a value above MaxPlaintext")
 	}
 	out := make([]byte, 1+aead.NonceSize(), 1+aead.NonceSize()+len(plaintext)+aead.Overhead())
 	out[0] = format
