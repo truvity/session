@@ -22,21 +22,21 @@ import (
 	"github.com/truvity/session/spike/internal/sess"
 )
 
-func logLine(r *http.Request, body []byte, seenAs string) {
-	h := map[string]string{}
-	for _, k := range []string{"Content-Type", "Cookie", "X-Amzn-Request-Context", "X-Amzn-Lambda-Context", "Host"} {
-		if v := r.Header.Get(k); v != "" {
-			if len(v) > 160 {
-				v = v[:160] + "..."
-			}
-			h[k] = v
-		}
-	}
-	b := string(body)
-	if len(b) > 120 {
-		b = b[:120] + "..."
-	}
-	line, _ := json.Marshal(map[string]any{"seen_as": seenAs, "method": r.Method, "uri": r.URL.RequestURI(), "headers": h, "body_bytes": len(body), "body": b})
+// clean drops the characters that could split a log line.
+func clean(v string) string {
+	v = strings.ReplaceAll(v, "\n", "")
+	return strings.ReplaceAll(v, "\r", "")
+}
+
+// logLine logs how a request arrived. It never logs a header value, a cookie or a body: only what says how the
+// adapter classified the event (the path, whether the adapter's own context header is there, the sizes).
+func logLine(r *http.Request, body []byte, seenAs, note string) {
+	line, _ := json.Marshal(map[string]any{
+		"seen_as": seenAs, "method": clean(r.Method), "path": clean(r.URL.Path), "query_bytes": len(r.URL.RawQuery),
+		"has_cookie_header": r.Header.Get("Cookie") != "", "has_x_amzn_request_context": r.Header.Get("X-Amzn-Request-Context") != "",
+		"x_amzn_request_context_is_null": r.Header.Get("X-Amzn-Request-Context") == "null",
+		"has_x_amzn_lambda_context":      r.Header.Get("X-Amzn-Lambda-Context") != "", "body_bytes": len(body), "event": clean(note),
+	})
 	log.Printf("REQ %s", line)
 }
 
@@ -49,12 +49,12 @@ func main() {
 	// pass-through: the event as the body. The authorizer answer is the JSON body, with the status of the answer.
 	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		logLine(r, body, "pass-through")
 		var probe struct {
 			Type    string `json:"type"`
 			Version string `json:"version"`
 		}
 		_ = json.Unmarshal(body, &probe)
+		logLine(r, body, "pass-through", "type="+probe.Type+" version="+probe.Version)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case probe.Type == "REQUEST" && probe.Version == "2.0":
@@ -74,7 +74,7 @@ func main() {
 	// everything else is an event that the adapter took for an HTTP event
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		logLine(r, body, "http")
+		logLine(r, body, "http", "")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"seen_as":"http","note":"this app answered as an HTTP server"}`))
 	})
