@@ -6,7 +6,24 @@ Browser sessions for websites behind Envoy Gateway, nginx or AWS API Gateway.
 
 It is a Go service built on [atoom](https://github.com/truvity/atoom): its stores, keys, sealing and configuration come from atoom's ports, drivers and blocks. Who may reach a route is decided by Cedar, as a library. Its security-audit events go to [audit](https://github.com/truvity/audit). It never emits usage records.
 
-Status: design. No production code yet. `spike/` holds throwaway prototype code from the first spike and the fit spike.
+Status: being built (step 2 of the [plan](docs/design.md#16-status-and-next-steps)). `core/` is the session core, the block of [0009](docs/decisions/0009-session-core-block.md). `spike/` holds throwaway prototype code from the first spike and the fit spike.
+
+## Layout
+
+| Path | Content |
+| --- | --- |
+| `core/` | The session core: records, cookie, idle and absolute expiry, logout pointers and tombstones, the check |
+| `internal/atoomx` | atoom's drivers mounted in this process, called through their generated clients |
+| `internal/localseal` | The stand-in for atoom's `seal` block, behind the core's `Sealer` interface |
+| `internal/policy` | The Cedar route policy ([docs/policy.md](docs/policy.md)) |
+| `internal/site` | The site file |
+| `internal/storetest` | A test double of the store port (atoom's memory store driver is Rust only) |
+
+## Building
+
+Inside `devbox shell` (or `devbox run -- just <recipe>`): `just build`, `just test` (no container), `just test-dynamodb` (the core on atoom's `store/dynamodb` driver against DynamoDB Local, in a container pinned by digest and removed at the end), `just lint`, `just vuln`, and `just check` for all of them.
+
+atoom is pinned to the commit of its release 0.3.0 (`5a0ae69`), whose tags are not pushed yet: `go.mod` requires `v0.3.0` and replaces each atoom module with its pseudo-version of that commit. When the tags exist, the `replace` lines go.
 
 ## Documents
 

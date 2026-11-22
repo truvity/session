@@ -1,0 +1,84 @@
+# The continuous integration of session. It judges pull requests and master, and never publishes.
+#
+# `check` is the one aggregate job: it fails when any other job fails, is cancelled or is skipped, so a new job needs no change in
+# the branch rules. The test containers are pinned by digest in the Justfile and removed by the recipe that starts them.
+name: CI
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: lint (Go, workflows)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: truvity/ci-actions/setup-devbox@82e404675ef3f826755e2939d1072cddcd07ed26 # v3.9.0
+      - run: devbox run -- just lint
+
+  # Build and the unit tests, with the race detector: no container, no network.
+  test:
+    name: build and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: truvity/ci-actions/setup-devbox@82e404675ef3f826755e2939d1072cddcd07ed26 # v3.9.0
+      - run: devbox run -- just build test
+
+  # The tests that need a container: the core on atoom's store/dynamodb driver against DynamoDB Local.
+  integration:
+    name: integration (containers)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: truvity/ci-actions/setup-devbox@82e404675ef3f826755e2939d1072cddcd07ed26 # v3.9.0
+      - run: devbox run -- just test-dynamodb
+
+  vuln:
+    name: known vulnerabilities
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: truvity/ci-actions/setup-devbox@82e404675ef3f826755e2939d1072cddcd07ed26 # v3.9.0
+      - run: devbox run -- just vuln
+
+  check:
+    name: check
+    if: ${{ always() }}
+    needs: [lint, test, integration, vuln]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad=$(echo "$RESULTS" | jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")')
+          if [ -n "$bad" ]; then
+            echo "::error::not successful: $bad"
+            exit 1
+          fi
