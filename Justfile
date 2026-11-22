@@ -4,13 +4,14 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 keycloak_image := "quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332"
+envoy_image := "envoyproxy/envoy:v1.39.6@sha256:1fde8efee875e4e4f6a39a90fe49d9338e1caacce5762034ef9fb4bbb9ad6aed"
 dynamodb_image := "amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86"
 
 default:
     @just --list
 
 # Everything CI runs.
-check: lint build test test-dynamodb test-keycloak vuln
+check: lint build test test-dynamodb test-keycloak test-envoy vuln
 
 # Build every package. CGO is off: the binary is static.
 build:
@@ -57,6 +58,13 @@ test-keycloak:
     if [ -z "$up" ]; then docker logs "$name" 2>&1 | tail -40; exit 1; fi
     SESSION_TEST_KEYCLOAK="http://127.0.0.1:$port" SESSION_TEST_KEYCLOAK_ADMIN_PASSWORD="$password" \
       go test -count=1 -v ./internal/signin/... 2>&1 \
+      | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/' ; test "${PIPESTATUS[0]}" -eq 0
+
+# The Envoy adapters through a real Envoy (examples/envoy/envoy.yaml, both modes) in a container on the host network. The test
+# starts the container on free ports and removes it at the end.
+test-envoy:
+    docker pull -q {{ envoy_image }} >/dev/null
+    SESSION_TEST_ENVOY_IMAGE="{{ envoy_image }}" go test -count=1 -v ./internal/envoy/... 2>&1 \
       | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/' ; test "${PIPESTATUS[0]}" -eq 0
 
 # Format check, vet and lint of the Go code, and the workflows.

@@ -1,4 +1,5 @@
-// Command session is the session service: the sign-in paths and the check.
+// Command session is the session service: the sign-in paths and the check, for Envoy over gRPC (--check-grpc) and HTTP
+// (--check-http).
 //
 //	session serve --config-dir DIR --key-dir DIR --seal-root FILE --dynamodb-table NAME [flags]
 //	session check --site FILE      validate a site file
@@ -25,12 +26,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	awsdynamodb "github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
+	"google.golang.org/grpc"
 
 	sourcev1 "github.com/truvity/atoom/source/gen/atoom/source/v1alpha1"
 
 	"github.com/truvity/session/core"
 	"github.com/truvity/session/internal/atoomx"
 	"github.com/truvity/session/internal/audit"
+	"github.com/truvity/session/internal/envoy"
 	"github.com/truvity/session/internal/localseal"
 	"github.com/truvity/session/internal/policy"
 	"github.com/truvity/session/internal/signin"
@@ -102,6 +106,7 @@ type serveFlags struct {
 	configDir, keyDir, sealRoot, environment string
 	table, endpoint                          string
 	listen, admin                            string
+	checkGRPC, checkHTTP                     string
 	storeTimeout                             time.Duration
 }
 
@@ -115,6 +120,8 @@ func serve(args []string) error {
 	fs.StringVar(&f.table, "dynamodb-table", "", "the DynamoDB table of the store driver")
 	fs.StringVar(&f.endpoint, "dynamodb-endpoint", "", "a DynamoDB endpoint other than AWS's (DynamoDB Local)")
 	fs.StringVar(&f.listen, "listen", ":8080", "the address of the sign-in paths")
+	fs.StringVar(&f.checkGRPC, "check-grpc", ":9001", "the address of Envoy's gRPC external authorisation; empty turns it off")
+	fs.StringVar(&f.checkHTTP, "check-http", "", "the address of Envoy's HTTP external authorisation (path prefix /check); empty turns it off")
 	fs.StringVar(&f.admin, "admin", "127.0.0.1:9090", "the address of /metrics and /healthz")
 	fs.DurationVar(&f.storeTimeout, "store-timeout", core.DefaultStoreTimeout, "the timeout of every store call; shorter than the proxy's timeout for the check")
 	_ = fs.Parse(args)
@@ -237,7 +244,21 @@ func (a *app) run(ctx context.Context, f serveFlags) error {
 		{Addr: f.listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second},
 		{Addr: f.admin, Handler: admin, ReadHeaderTimeout: 10 * time.Second},
 	}
-	errs := make(chan error, len(servers))
+	if f.checkHTTP != "" {
+		servers = append(servers, &http.Server{Addr: f.checkHTTP, Handler: &envoy.HTTP{Core: a.core, Prefix: "/check"}, ReadHeaderTimeout: 10 * time.Second})
+	}
+	errs := make(chan error, len(servers)+1)
+	if f.checkGRPC != "" {
+		ln, err := net.Listen("tcp", f.checkGRPC)
+		if err != nil {
+			return err
+		}
+		gs := grpc.NewServer()
+		authv3.RegisterAuthorizationServer(gs, &envoy.GRPC{Core: a.core})
+		slog.Info("listening", "address", ln.Addr().String(), "service", "envoy.service.auth.v3.Authorization")
+		go func() { errs <- gs.Serve(ln) }()
+		defer gs.GracefulStop()
+	}
 	for _, s := range servers {
 		ln, err := net.Listen("tcp", s.Addr)
 		if err != nil {
