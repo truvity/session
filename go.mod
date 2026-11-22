@@ -38,21 +38,3 @@ require (
 	github.com/go-json-experiment/json v1.27.2 // indirect
 	golang.org/x/exp v0.0.0-20220921023135-46d9e7742f1e // indirect
 )
-
-replace github.com/truvity/atoom/common v0.3.0 => github.com/truvity/atoom/common v0.2.1-0.20261122132425-5a0ae6921483
-
-replace github.com/truvity/atoom/store v0.3.0 => github.com/truvity/atoom/store v0.2.1-0.20261122132425-5a0ae6921483
-
-replace github.com/truvity/atoom/store/dynamodb v0.3.0 => github.com/truvity/atoom/store/dynamodb v0.2.1-0.20261122132425-5a0ae6921483
-
-replace github.com/truvity/atoom/key v0.3.0 => github.com/truvity/atoom/key v0.2.1-0.20261122132425-5a0ae6921483
-
-replace github.com/truvity/atoom/key/software v0.3.0 => github.com/truvity/atoom/key/software v0.2.1-0.20261122132425-5a0ae6921483
-
-replace github.com/truvity/atoom/source v0.3.0 => github.com/truvity/atoom/source v0.2.1-0.20261122132425-5a0ae6921483
-
-replace github.com/truvity/atoom/socket v0.3.0 => github.com/truvity/atoom/socket v0.2.1-0.20261122132425-5a0ae6921483
-
-replace github.com/truvity/atoom/transport v0.3.0 => github.com/truvity/atoom/transport v0.2.1-0.20261122132425-5a0ae6921483
-
-replace github.com/truvity/atoom/source/file v0.3.0 => github.com/truvity/atoom/source/file v0.0.0-20261122132425-5a0ae6921483
