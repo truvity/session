@@ -23,7 +23,7 @@ Status: being built (step 2 of the [plan](docs/design.md#16-status-and-next-step
 
 Inside `devbox shell` (or `devbox run -- just <recipe>`): `just build`, `just test` (no container), `just test-dynamodb` (the core on atoom's `store/dynamodb` driver against DynamoDB Local, in a container pinned by digest and removed at the end), `just lint`, `just vuln`, and `just check` for all of them.
 
-atoom is pinned to the commit of its release 0.3.0 (`5a0ae69`), whose tags are not pushed yet: `go.mod` requires `v0.3.0` and replaces each atoom module with its pseudo-version of that commit. When the tags exist, the `replace` lines go.
+atoom is pinned to its release 0.3.0 in `go.mod`; an upgrade is a deliberate bump (decision 0006).
 
 ## Documents
 
