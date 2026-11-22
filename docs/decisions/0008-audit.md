@@ -18,7 +18,7 @@ A browser-session service sees sign-ins, logouts and denials, which security aud
 - **`session` never emits usage or billing records.** A product behind `session` meters its own usage.
 - Each Cedar decision is audited with the digest of its policy set ([0007](0007-policy.md)).
 
-Open: what a sign-in does while the transport is down. It follows the blocking emit that `truvity/audit` defines for its security class.
+Decided by [0015](0015-envoy-http-mode-csrf-header-and-step-2-choices.md): in the first version a sign-in fails closed while the transport is down.
 
 State: the emitter in Go is planned in `truvity/audit`.
 
