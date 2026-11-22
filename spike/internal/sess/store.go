@@ -204,6 +204,8 @@ type Loaded struct {
 	Created  int64
 	LastSeen int64
 	Expires  int64
+	// Set by stores whose items carry a version (the fit spike's atoom-backed store).
+	Version uint64
 }
 
 // Get loads a session and applies the explicit expiry checks (TTL deletion is lazy)

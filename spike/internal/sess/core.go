@@ -42,8 +42,17 @@ type Decision struct {
 	Subject string
 }
 
+// CheckStore is what the check path needs from a session store: one read and the idle refresh.
+// The first spike's *Store (the AWS SDK direct) and the fit spike's atoom-backed store both fit it.
+type CheckStore interface {
+	Get(ctx context.Context, id string, withTombstones bool) (*Loaded, error)
+	Touch(ctx context.Context, id string, l *Loaded) (bool, error)
+}
+
 type Core struct {
-	Store      *Store
+	Store *Store
+	// Checker, when set, serves the check path in place of Store (fit spike: atoom's store port).
+	Checker    CheckStore
 	CookieName string
 	Tombstones bool // check tombstones on each request
 	// Headers the allow answer owns. A browser-sent value is always replaced or removed.
@@ -98,7 +107,11 @@ func (c *Core) Check(ctx context.Context, r Request) Decision {
 	if id == "" {
 		return deny()
 	}
-	l, err := c.Store.Get(ctx, id, c.Tombstones)
+	cs := CheckStore(c.Store)
+	if c.Checker != nil {
+		cs = c.Checker
+	}
+	l, err := cs.Get(ctx, id, c.Tombstones)
 	if errors.Is(err, ErrNotFound) {
 		return deny()
 	}
@@ -106,7 +119,7 @@ func (c *Core) Check(ctx context.Context, r Request) Decision {
 		// fail closed
 		return Decision{Kind: Unavailable, Status: http.StatusServiceUnavailable, Body: []byte(`{"error":"store_unavailable"}`)}
 	}
-	_, _ = c.Store.Touch(ctx, id, l)
+	_, _ = cs.Touch(ctx, id, l)
 	d := Decision{Kind: Allow, Subject: l.Rec.Sub, Set: map[string]string{
 		"x-session-user":   l.Rec.Sub,
 		"x-session-email":  l.Rec.Email,

@@ -1,0 +1,17 @@
+{
+  "type": "REQUEST",
+  "methodArn": "arn:aws:execute-api:eu-west-1:000000000000:api123/prod/GET/app/x",
+  "resource": "/app/{proxy+}",
+  "path": "/app/x",
+  "httpMethod": "GET",
+  "headers": {"Cookie": "__Host-spike=SESSION; theme=dark", "Accept": "text/html", "Host": "x.example.test", "Sec-Fetch-Mode": "navigate"},
+  "multiValueHeaders": {"Cookie": ["__Host-spike=SESSION; theme=dark"], "Accept": ["text/html"], "Host": ["x.example.test"], "Sec-Fetch-Mode": ["navigate"]},
+  "queryStringParameters": {"a": "1"},
+  "multiValueQueryStringParameters": {"a": ["1"]},
+  "pathParameters": {"proxy": "x"},
+  "stageVariables": {},
+  "requestContext": {
+    "path": "/prod/app/x", "accountId": "000000000000", "resourceId": "r1", "stage": "prod", "requestId": "req-1",
+    "identity": {"sourceIp": "192.0.2.1", "userAgent": "test"}, "resourcePath": "/app/{proxy+}", "httpMethod": "GET", "apiId": "api123"
+  }
+}
