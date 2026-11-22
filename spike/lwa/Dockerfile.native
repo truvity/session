@@ -1,0 +1,4 @@
+# The same emulator image with no adapter: cmd/authorizer-lambda as a native Go handler (the fallback of record 0012).
+FROM public.ecr.aws/lambda/provided@sha256:4389209379db22f6caca72748d8cbfd86a470b5d0a9ff9efcdcf47198175edce
+COPY bootstrap /var/task/bootstrap
+CMD ["bootstrap"]

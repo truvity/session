@@ -1,0 +1,82 @@
+=== REST API REQUEST authorizer event, valid session
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+--- answer body:
+{"principalId":"alice","policyDocument":{"Version":"2012-10-17","Statement":[{"Action":["execute-api:Invoke"],"Effect":"Allow","Resource":["arn:aws:execute-api:eu-west-1:000000000000:api123/prod/GET/app/x"]}]},"context":{"email":"alice@example.test","groups":"staff","sub":"alice"}}
+=== REST API REQUEST authorizer event, no session
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+--- answer body:
+{"errorMessage":"Unauthorized","errorType":"errorString"}
+=== HTTP API 2.0 authorizer event, valid session
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+--- answer body:
+{"isAuthorized":true,"context":{"email":"alice@example.test","groups":"staff","sub":"alice"}}
+=== HTTP API 2.0 authorizer event, no session
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+--- answer body:
+{"isAuthorized":false}
+=== HTTP API 2.0 authorizer event, store down
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+--- answer body:
+{"errorMessage":"store unavailable","errorType":"errorString"}
+=== REST API REQUEST authorizer event, store down
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+--- answer body:
+{"errorMessage":"store unavailable","errorType":"errorString"}
+=== HTTP API 2.0 event WITHOUT identitySource, valid
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+--- answer body:
+{"isAuthorized":true,"context":{"email":"alice@example.test","groups":"staff","sub":"alice"}}
+=== HTTP API 2.0 event with an EMPTY identitySource
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+--- answer body:
+{"isAuthorized":true,"context":{"email":"alice@example.test","groups":"staff","sub":"alice"}}
+=== REST API TOKEN authorizer event
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+--- answer body:
+{"errorMessage":"Unauthorized","errorType":"errorString"}
+=== non-HTTP event (control)
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+--- answer body:
+{"errorMessage":"Unauthorized","errorType":"errorString"}
+=== app log
+START RequestId: ea1200eb-9b6e-42f8-ad78-b2edeaa81b1b Version: $LATEST
+Nov 2026 09:05:07,824 [INFO] (rapid) INIT START(type: on-demand, phase: init)
+Nov 2026 09:05:07,829 [INFO] (rapid) INVOKE START(requestId: ea1200eb-9b6e-42f8-ad78-b2edeaa81b1b)
+END RequestId: ea1200eb-9b6e-42f8-ad78-b2edeaa81b1b
+START RequestId: 3089f2a3-b882-447b-8de2-a1058c9ef229 Version: $LATEST
+Nov 2026 09:05:07,835 [INFO] (rapid) INVOKE START(requestId: 3089f2a3-b882-447b-8de2-a1058c9ef229)
+END RequestId: 3089f2a3-b882-447b-8de2-a1058c9ef229
+START RequestId: 517ab106-daf3-4f9c-8d74-72025ae622ce Version: $LATEST
+Nov 2026 09:05:07,842 [INFO] (rapid) INVOKE START(requestId: 517ab106-daf3-4f9c-8d74-72025ae622ce)
+END RequestId: 517ab106-daf3-4f9c-8d74-72025ae622ce
+START RequestId: b7d35b5d-e671-4a06-a3d2-71301ab56917 Version: $LATEST
+Nov 2026 09:05:07,848 [INFO] (rapid) INVOKE START(requestId: b7d35b5d-e671-4a06-a3d2-71301ab56917)
+END RequestId: b7d35b5d-e671-4a06-a3d2-71301ab56917
+START RequestId: 0f54037e-d37b-442f-8512-18d836b095ff Version: $LATEST
+Nov 2026 09:05:07,854 [INFO] (rapid) INVOKE START(requestId: 0f54037e-d37b-442f-8512-18d836b095ff)
+END RequestId: 0f54037e-d37b-442f-8512-18d836b095ff
+START RequestId: 03e1d348-5058-425b-a66a-7541faaf4951 Version: $LATEST
+Nov 2026 09:05:07,860 [INFO] (rapid) INVOKE START(requestId: 03e1d348-5058-425b-a66a-7541faaf4951)
+END RequestId: 03e1d348-5058-425b-a66a-7541faaf4951
+START RequestId: b1cf0255-696c-4947-942f-36fbb800320e Version: $LATEST
+Nov 2026 09:05:07,865 [INFO] (rapid) INVOKE START(requestId: b1cf0255-696c-4947-942f-36fbb800320e)
+END RequestId: b1cf0255-696c-4947-942f-36fbb800320e
+START RequestId: 4d97791b-cf10-474e-8cbc-dcd3a440dee5 Version: $LATEST
+Nov 2026 09:05:07,870 [INFO] (rapid) INVOKE START(requestId: 4d97791b-cf10-474e-8cbc-dcd3a440dee5)
+END RequestId: 4d97791b-cf10-474e-8cbc-dcd3a440dee5
+START RequestId: 3cf253ce-1766-423d-8bee-35ea594f5726 Version: $LATEST
+Nov 2026 09:05:07,875 [INFO] (rapid) INVOKE START(requestId: 3cf253ce-1766-423d-8bee-35ea594f5726)
+END RequestId: 3cf253ce-1766-423d-8bee-35ea594f5726
+START RequestId: 25b5fd87-824f-4aa7-8659-ebd182ecb014 Version: $LATEST
+Nov 2026 09:05:07,881 [INFO] (rapid) INVOKE START(requestId: 25b5fd87-824f-4aa7-8659-ebd182ecb014)
+END RequestId: 25b5fd87-824f-4aa7-8659-ebd182ecb014

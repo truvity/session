@@ -1,0 +1,49 @@
+=== RUN   TestCheckCoreOnAtomStore
+    fit_test.go:58: DynamoDB calls to create a session (item + 2 index entries): map[BatchGetItem:1 TransactWriteItems:1]
+    fit_test.go:66: DynamoDB calls for one allowed check: map[GetItem:1]
+--- PASS: TestCheckCoreOnAtomStore (0.01s)
+=== RUN   TestExpiry
+--- PASS: TestExpiry (1.32s)
+=== RUN   TestTouchIsOneWinnerAndKeepsIndexEntries
+    fit_test.go:148: 8 concurrent Touch at one version: 1 winner(s); DynamoDB calls: map[BatchGetItem:15 TransactWriteItems:8]
+    fit_test.go:159: one Touch, DynamoDB calls: map[BatchGetItem:1 PutItem:1]
+--- PASS: TestTouchIsOneWinnerAndKeepsIndexEntries (0.04s)
+=== RUN   TestLogoutByIndexAndByPointer
+    fit_test.go:180: logout by sid via index entries: deleted 1, DynamoDB calls map[BatchGetItem:2 Query:1 TransactWriteItems:1]
+    fit_test.go:203: create with pointer items: 1 tries, DynamoDB calls map[BatchGetItem:1 GetItem:2 TransactWriteItems:1]
+    fit_test.go:212: logout by subject via pointer: deleted 2, DynamoDB calls map[BatchGetItem:1 GetItem:1 TransactWriteItems:1]
+--- PASS: TestLogoutByIndexAndByPointer (0.03s)
+=== RUN   TestConcurrentCreatesSameSubject
+    fit_test.go:238: index entries: 16 parallel sign-ins of one subject: 0 failed, 16 tries in total, 13ms
+    fit_test.go:238: pointer items: 16 parallel sign-ins of one subject: 0 failed, 76 tries in total, 178ms
+--- PASS: TestConcurrentCreatesSameSubject (0.21s)
+=== RUN   TestLockJTIAndTombstone
+--- PASS: TestLockJTIAndTombstone (0.62s)
+=== RUN   TestDeadlineAndFailClosed
+    fit_test.go:302: what the driver's handler saw (Connect-Timeout-Ms|correlation id): 799|corr-42
+    fit_test.go:312: slow store (+400 ms), deadline 60 ms: returned after 60ms with code deadline_exceeded
+    fit_test.go:321: slow store (+3 s) through the core: true after 1.5s
+    fit_test.go:332: failing engine: code unavailable, reason "engine", message "unavailable: engine"
+--- PASS: TestDeadlineAndFailClosed (1.57s)
+=== RUN   TestCapabilities
+    fit_test.go:342: store capabilities: store="dynamodb" tail_log=false (no durability field yet)
+    fit_test.go:346: value of 390 KiB: code invalid_argument reason "batch"
+    fit_test.go:348: key with a space: code invalid_argument reason "address"
+--- PASS: TestCapabilities (0.01s)
+=== RUN   TestKeySoftware
+    fit_test.go:378: client assertion (ES384) through the in-process key port, software driver: 184µs per signature
+    fit_test.go:393: Ensure(client-assertion, ES256): code invalid_argument reason "purpose"
+    fit_test.go:393: Ensure(session-client-key, ES384): code invalid_argument reason "purpose"
+    fit_test.go:393: Ensure(token-signing, ES256): code failed_precondition reason "algorithm"
+    fit_test.go:399: Ensure(audit-log, ES256) (the only ES256 purpose): <nil>
+--- PASS: TestKeySoftware (0.14s)
+=== RUN   TestSourceFile
+    fit_test.go:420: Read(site): 35 bytes, version e234bf287aa600a9…
+    fit_test.go:427: Read("site.yaml"): code invalid_argument reason "schema"
+    fit_test.go:427: Read("Site"): code invalid_argument reason "schema"
+    fit_test.go:427: Read("policy_bundle"): code invalid_argument reason "schema"
+    fit_test.go:427: Read("../x"): code invalid_argument reason "schema"
+    fit_test.go:449: Watch saw a replaced file after 101ms
+--- PASS: TestSourceFile (0.40s)
+PASS
+ok  	github.com/truvity/session/spike/internal/fit	4.358s

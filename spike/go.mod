@@ -3,20 +3,29 @@ module github.com/truvity/session/spike
 go 1.27.0
 
 require (
+	connectrpc.com/connect v1.21.1
+	github.com/aws/aws-lambda-go v1.55.1
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.20
+	github.com/aws/aws-sdk-go-v2/credentials v1.21.2
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.74.1
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	github.com/go-jose/go-jose/v4 v4.1.9
+	github.com/truvity/atoom/common v0.2.1-0.20261122085059-94ab004a4117
+	github.com/truvity/atoom/key v0.2.1-0.20261122085059-94ab004a4117
+	github.com/truvity/atoom/key/software v0.2.1-0.20261122085059-94ab004a4117
+	github.com/truvity/atoom/source v0.2.1-0.20261122085059-94ab004a4117
+	github.com/truvity/atoom/source/file v0.0.0-20261122085059-94ab004a4117
+	github.com/truvity/atoom/store v0.2.1-0.20261122085059-94ab004a4117
+	github.com/truvity/atoom/store/dynamodb v0.2.1-0.20261122085059-94ab004a4117
 	golang.org/x/oauth2 v0.38.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1
 	google.golang.org/grpc v1.85.0
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
-	github.com/aws/aws-lambda-go v1.55.1 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.21.2 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.9 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.12 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.12 // indirect
@@ -35,5 +44,4 @@ require (
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 )
