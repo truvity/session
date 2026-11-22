@@ -1,0 +1,26 @@
+# An example site file (design section 10). session reads it through atoom's source port: the Go file driver serves the
+# document "site" from the file site.jws in the directory of --config-dir, so install this file as site.jws there.
+# `session check --site examples/site.yaml` validates it.
+site: docs
+host: docs.example.com
+issuer: https://issuer.example.com/realms/docs
+client:
+  id: session-docs
+  auth: private_key_jwt        # the key is the key port's purpose client-assertion; which driver holds it is a start-up setting
+scopes: [openid, profile, email]
+session:
+  idle: 30m
+  max: 8h
+policy:
+  bundle: policy-bundle        # the document policy-bundle.jws next to site.jws: Cedar text (docs/policy.md)
+routes:
+  - match: { prefix: /assets/ }
+    mode: public
+  - name: admin
+    match: { prefix: /admin/ }
+    mode: session
+  - match: { prefix: /api/ }
+    mode: session
+    unauthenticated: "401"
+  - match: { prefix: / }
+    mode: session

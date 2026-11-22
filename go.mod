@@ -11,6 +11,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.2
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.74.1
 	github.com/cedar-policy/cedar-go v1.9.3
+	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/truvity/atoom/common v0.3.0
 	github.com/truvity/atoom/key v0.3.0
 	github.com/truvity/atoom/key/software v0.3.0
@@ -19,6 +21,7 @@ require (
 	github.com/truvity/atoom/store v0.3.0
 	github.com/truvity/atoom/store/dynamodb v0.3.0
 	go.yaml.in/yaml/v3 v3.0.6
+	golang.org/x/oauth2 v0.38.0
 	google.golang.org/protobuf v1.36.12
 )
 
