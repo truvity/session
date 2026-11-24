@@ -5,13 +5,14 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 keycloak_image := "quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332"
 envoy_image := "envoyproxy/envoy:v1.39.6@sha256:1fde8efee875e4e4f6a39a90fe49d9338e1caacce5762034ef9fb4bbb9ad6aed"
+nginx_image := "nginx:1.30.8-alpine-slim@sha256:e9eaa7298465eab06d618c51556fdcf3fb5061f9ff40bd28ee898fbd7ee7f900"
 dynamodb_image := "amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86"
 
 default:
     @just --list
 
 # Everything CI runs.
-check: lint build test test-dynamodb test-keycloak test-envoy vuln
+check: lint build test test-dynamodb test-keycloak test-envoy test-nginx vuln
 
 # Build every package. CGO is off: the binary is static.
 build:
@@ -65,6 +66,13 @@ test-keycloak:
 test-envoy:
     docker pull -q {{ envoy_image }} >/dev/null
     SESSION_TEST_ENVOY_IMAGE="{{ envoy_image }}" go test -count=1 -v ./internal/envoy/... 2>&1 \
+      | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/' ; test "${PIPESTATUS[0]}" -eq 0
+
+# The nginx adapter through a real nginx (examples/nginx/nginx.conf) in a container on the host network. The test starts the
+# container on a free port and removes it at the end.
+test-nginx:
+    docker pull -q {{ nginx_image }} >/dev/null
+    SESSION_TEST_NGINX_IMAGE="{{ nginx_image }}" go test -count=1 -v ./internal/nginx/... 2>&1 \
       | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/' ; test "${PIPESTATUS[0]}" -eq 0
 
 # Format check, vet and lint of the Go code, and the workflows.

@@ -84,7 +84,7 @@ Rules of this mode:
 - The proxy sends only headers. The check never sees the body.
 - The proxy strips `Authorization`, `Cookie` and identity headers that came from the browser. The allow answer sets the real ones. The example configs ship this.
 - The sign-in paths (`/_session/*`) are routed to the service without a check, because they run before a session exists.
-- The check fails closed. If the store is down, the answer is 503, never allow. The check bounds every store call with its own timeout (1.5 s in the first spike), and the proxy's timeout for the check is longer, so the check's 503 is the one the client sees. nginx shows it as 500.
+- The check fails closed. If the store is down, the answer is 503, never allow. The check bounds every store call with its own timeout (1.5 s in the first spike), and the proxy's timeout for the check is longer, so the check's 503 is the one the client sees. On nginx the example turns the check's markers, and a check that cannot be reached, into the same 503 ([0018](decisions/0018-nginx-adapter.md)).
 - The check must see the same normalised path the proxy routes on. Each host example ships the settings for it.
 
 Hosts:
@@ -92,10 +92,10 @@ Hosts:
 | Host | How it asks | Notes |
 | --- | --- | --- |
 | Envoy Gateway | `SecurityPolicy` with external authorisation. gRPC mode is preferred, HTTP mode is documented | Header removal (`headers_to_remove` in gRPC, `x-envoy-auth-headers-to-remove` in HTTP), `allowed_headers` with `x-requested-with`, path normalisation, per-route disable ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)) |
-| nginx | `auth_request` with `auth_request_set` | Self-hosted installs. A 401 with markers, `$uri$is_args$args`, 500 on failure |
+| nginx | `auth_request` with `auth_request_set` | Self-hosted installs. Every refusal is a 401 with markers that the example turns into the check's own answer; `$uri$is_args$args` set in the protected location; raw paths that differ from `$uri` refused; one `Set-Cookie`; 503 on failure ([0018](decisions/0018-nginx-adapter.md)) |
 | AWS API Gateway | Lambda authorizer, for both the REST API and the HTTP API (payload 2.0). The docs default to the HTTP API | Cannot redirect, cannot set or remove headers, cannot send `Set-Cookie`. The authorizer cache is set to 0. Stripping is the integration's parameter mapping. The HTTP API cannot map `Authorization`, so the per-API token uses `X-Session-Token` |
 
-The rules for each host, and the reasons, are in [0011](decisions/0011-host-adapter-rules.md). Every Lambda function runs behind the Web Adapter ([0012](decisions/0012-lambda.md)), except the authorizer, which is a native Go handler in the same binary ([0014](decisions/0014-authorizer-native-go-handler.md)).
+The rules for each host, and the reasons, are in [0011](decisions/0011-host-adapter-rules.md), with [0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md) for Envoy and [0018](decisions/0018-nginx-adapter.md) for nginx. Every Lambda function runs behind the Web Adapter ([0012](decisions/0012-lambda.md)), except the authorizer, which is a native Go handler in the same binary ([0014](decisions/0014-authorizer-native-go-handler.md)).
 
 The in-path mode is a plain reverse proxy that runs the same check, then forwards the request. It costs a hop, so it is for sites where that is fine.
 
@@ -108,7 +108,7 @@ These are the rules every host gets. They do not depend on the proxy ([0004](dec
 | S1 | Cookie `__Host-<site>`: opaque id, `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain` |
 | S2 | Sessions live on the server, sealed, in an atoom store driver. Each site has an idle and a maximum lifetime |
 | S3 | Sign-in uses authorisation code with PKCE, always. PAR and `private_key_jwt` are used |
-| S4 | Page without session: redirect to sign-in. API call: JSON 401. The API Gateway authorizer cannot redirect, so it returns the error `Unauthorized` (401, never a deny policy) and the browser helper starts sign-in. nginx makes the redirect and the 401 body itself from a marker in the check's 401 |
+| S4 | Page without session: redirect to sign-in. API call: JSON 401. The API Gateway authorizer cannot redirect, so it returns the error `Unauthorized` (401, never a deny policy) and the browser helper starts sign-in. nginx makes the redirect and the 401 from the markers of the check's 401, with the check's own body |
 | S5 | State-changing requests need CSRF protection: the header `X-Requested-With: XMLHttpRequest` plus `Origin` and `Sec-Fetch-Site` checks. Headers only ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)) |
 | S6 | Logout is a POST with CSRF, then the issuer's end-session. Back-channel logout deletes the session on all replicas |
 | S8 | The browser's `Authorization`, cookies and identity headers are stripped. In external authorisation the host strips and the allow answer sets them (section 4) |
@@ -414,7 +414,7 @@ The full model goes into `docs/threat-model.md` with the first code.
 | Open redirect | `return_to` must be a relative path, kept server-side |
 | Login CSRF and code injection | State plus binding cookie, PKCE, `iss` check |
 | Header spoofing | The host strips browser headers, the allow answer sets them (S8). The examples ship this |
-| Path confusion between proxy and check | Both use the normalised path. Reproduced in the first spike on nginx with `$request_uri`. The conformance suite sends dot-segment, encoded-dot and merged-slash paths to every host, and the examples ship Envoy `normalize_path`, `merge_slashes` and `path_with_escaped_slashes_action`, and nginx `$uri$is_args$args` with encoded slashes rejected |
+| Path confusion between proxy and check | Both use the normalised path. Reproduced in the first spike on nginx with `$request_uri`. The conformance suite sends dot-segment, encoded-dot and merged-slash paths to every host, and the examples ship Envoy `normalize_path`, `merge_slashes` and `path_with_escaped_slashes_action`, and nginx `$uri$is_args$args` (read in the protected location, not the subrequest's) with dot segments and encoded dots, slashes and backslashes refused, because nginx passes the site the raw URI ([0018](decisions/0018-nginx-adapter.md)) |
 | Replay of logout tokens | `jti` stored until the token expires |
 | Store outage | Fail closed, with a timeout on every call |
 | Lossy store loses sessions | Accepted: the person signs in again |
@@ -449,6 +449,7 @@ The conformance suite drives a headless browser through the real flows: sign-in,
 | The group SSO reference stand | [0013](decisions/0013-reference-stand.md) |
 | Envoy HTTP mode, the CSRF header, the choices of step 2 | [0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md) |
 | The exchange client and the identity header, the choices of step 3.1 | [0016](decisions/0016-exchange-client-and-identity-header.md) |
+| The nginx adapter, the choices of step 3.2 (proposed) | [0018](decisions/0018-nginx-adapter.md) |
 
 ## 16. Status and next steps
 
@@ -462,7 +463,7 @@ Planned, in order:
 2. **Check core, sign-in handler and Envoy adapters** against Keycloak, about four to five days. The broker rules and the browser library come from the group SSO reference stand where they fit.
 3. **nginx adapter, AWS KMS, the exchange client and the conformance suite**, with the stand's scenarios and Keycloak findings, about three to four days. It needs from atoom: the `seal` block, the Go `source/file` driver, the Cedar loader with its decision test set and the durability field; and from `truvity/audit`, the emitter in Go. One pull request for each part:
    1. **The exchange client and the identity header** (built, [0016](decisions/0016-exchange-client-and-identity-header.md)): the route modes `exchange` and `identity-header`, tested against Keycloak's standard token exchange and through Envoy. Needs nothing new from atoom.
-   2. **The nginx adapter**: `auth_request` with the markers of [0011](decisions/0011-host-adapter-rules.md) and the example config.
+   2. **The nginx adapter** (built, [0018](decisions/0018-nginx-adapter.md), proposed): `auth_request` with the markers of [0011](decisions/0011-host-adapter-rules.md), the example config `examples/nginx/nginx.conf`, tested through nginx 1.30 as it is.
    3. **AWS KMS**: the `key/awskms` driver as a start-up setting for the client assertion and the identity header.
    4. **The conformance suite**: a headless browser through the real flows on every host, with the stand's scenarios.
 4. **First version** for the first sites.

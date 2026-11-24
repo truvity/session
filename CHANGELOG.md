@@ -5,6 +5,13 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### Step 3.2: the nginx adapter
+
+- **nginx `auth_request`** ([0018](docs/decisions/0018-nginx-adapter.md), proposed): `session serve --check-nginx` serves the check at `/auth` and the refused exchange's page at `/error-page`. An allow carries the headers to set; every refusal is a 401 with markers (`X-Session-Action`, `X-Session-Status`, `X-Session-Location`, `X-Session-Body`) that `examples/nginx/nginx.conf` turns into the check's own answer and body, as on Envoy.
+- The example reads `$uri$is_args$args` in the protected location (inside the check's own location `$uri` is the subrequest's path, which the first spike missed), refuses raw paths with dot segments or encoded dots, slashes or backslashes, and sets every owned header on every request.
+- A failed or unreachable check is a 503 on nginx too, not 500.
+- New: `just test-nginx`, the example run in nginx 1.30.8 (pinned by digest), in CI.
+
 ### Step 3.1: the exchange client and the identity header
 
 - **The route modes `exchange` and `identity-header` start** ([0016](docs/decisions/0016-exchange-client-and-identity-header.md)); until now they were refused at start ([0015](docs/decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)).

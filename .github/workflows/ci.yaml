@@ -42,7 +42,7 @@ jobs:
       - run: devbox run -- just build test
 
   # The tests that need a container: the core on atoom's store/dynamodb driver against DynamoDB Local, and the sign-in handler
-  # against a test Keycloak, and the Envoy adapters through a real Envoy.
+  # against a test Keycloak, the Envoy adapters through a real Envoy, and the nginx adapter through a real nginx.
   integration:
     name: integration (containers)
     runs-on: ubuntu-24.04
@@ -52,7 +52,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: truvity/ci-actions/setup-devbox@82e404675ef3f826755e2939d1072cddcd07ed26 # v3.9.0
-      - run: devbox run -- just test-dynamodb test-keycloak test-envoy
+      - run: devbox run -- just test-dynamodb test-keycloak test-envoy test-nginx
 
   vuln:
     name: known vulnerabilities
