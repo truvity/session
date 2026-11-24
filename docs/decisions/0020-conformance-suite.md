@@ -1,6 +1,6 @@
 # 0020. The conformance suite: the choices of step 3.4
 
-Status: proposed
+Status: accepted, 2026-11-24 (owner decision on the pull request of step 3.4)
 Date: 2026-11-24
 
 Builds the conformance suite that [0004](0004-browser-session-contract.md), [0011](0011-host-adapter-rules.md) and design section 14 call for, for the hosts that run without AWS.
