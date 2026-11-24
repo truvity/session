@@ -304,7 +304,7 @@ Rules:
 
 The key port covers the `private_key_jwt` assertions, the signed identity header and the wrapping of data keys. The key file is the simple start and works with Keycloak. AWS KMS keeps the key from ever leaving it. The JWKS of the service is published at `/_session/jwks`.
 
-Which driver holds each signing purpose is a start-up setting ([0019](decisions/0019-signing-keys-on-aws-kms.md)): `--key client-assertion=awskms` or `--key identity-header=awskms:<key ID, ARN or alias>`, repeatable, and a purpose not named stays on the key file. On KMS, a purpose's key is found by the alias `alias/<prefix>/<purpose>` (the prefix `session/<site>` by default) or by the key the deployment names. The deployment makes the keys (`ECC_NIST_P256`, `SIGN_VERIFY`) and their key policy; session never makes one, and its role needs `kms:DescribeKey`, `kms:GetPublicKey` and `kms:Sign`. A missing, disabled or wrong key fails the start. The kid stays the key port's `key_id` (on KMS the key ARN and the fingerprint), and the identity header's reuse keeps KMS to about two signatures a minute for each session and audience. Rotation on KMS is a new key and a restart; whether the JWKS keeps the previous key for a while is open.
+Which driver holds each signing purpose is a start-up setting ([0019](decisions/0019-signing-keys-on-aws-kms.md)): `--key client-assertion=awskms` or `--key identity-header=awskms:<key ID, ARN or alias>`, repeatable, and a purpose not named stays on the key file. On KMS, a purpose's key is found by the alias `alias/<prefix>/<purpose>` (the prefix `session/<site>` by default) or by the key the deployment names. The deployment makes the keys (`ECC_NIST_P256`, `SIGN_VERIFY`) and their key policy; session never makes one, and its role needs `kms:DescribeKey`, `kms:GetPublicKey` and `kms:Sign`. A missing, disabled or wrong key fails the start. The kid stays the key port's `key_id` (on KMS the key ARN and the fingerprint), and the identity header's reuse keeps KMS to about two signatures a minute for each session and audience. Rotation on KMS is a new key and a restart; before the first site that rotates, the JWKS will also keep the previous key for a while (0019).
 
 The `seal` block holds the data keys, one set for each purpose and installation, never for each person. One KMS call wraps a key, not each request. `session` decides which fields it seals. Fields that index entries or conditions use stay readable. Who may use which purpose is a rule `session` hands to the block.
 
@@ -452,7 +452,7 @@ The conformance suite drives a headless browser through the real flows: sign-in,
 | Envoy HTTP mode, the CSRF header, the choices of step 2 | [0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md) |
 | The exchange client and the identity header, the choices of step 3.1 | [0016](decisions/0016-exchange-client-and-identity-header.md) |
 | The nginx adapter, the choices of step 3.2 | [0018](decisions/0018-nginx-adapter.md) |
-| Signing keys on AWS KMS, the choices of step 3.3 (proposed) | [0019](decisions/0019-signing-keys-on-aws-kms.md) |
+| Signing keys on AWS KMS, the choices of step 3.3 | [0019](decisions/0019-signing-keys-on-aws-kms.md) |
 
 ## 16. Status and next steps
 
@@ -467,7 +467,7 @@ Planned, in order:
 3. **nginx adapter, AWS KMS, the exchange client and the conformance suite**, with the stand's scenarios and Keycloak findings, about three to four days. It needs from atoom: the `seal` block, the Go `source/file` driver, the Cedar loader with its decision test set and the durability field; and from `truvity/audit`, the emitter in Go. One pull request for each part:
    1. **The exchange client and the identity header** (built, [0016](decisions/0016-exchange-client-and-identity-header.md)): the route modes `exchange` and `identity-header`, tested against Keycloak's standard token exchange and through Envoy. Needs nothing new from atoom.
    2. **The nginx adapter** (built, [0018](decisions/0018-nginx-adapter.md)): `auth_request` with the markers of [0011](decisions/0011-host-adapter-rules.md), the example config `examples/nginx/nginx.conf`, tested through nginx 1.30 as it is.
-   3. **AWS KMS** (built, [0019](decisions/0019-signing-keys-on-aws-kms.md), proposed): the `key/awskms` driver as a start-up setting for each of the client assertion and the identity header (`--key PURPOSE=awskms[:KEY]`), tested on an in-process KMS double and against Keycloak. Needs nothing newer from atoom: `key/awskms` 0.3.0. The real-AWS check is part of step 5.
+   3. **AWS KMS** (built, [0019](decisions/0019-signing-keys-on-aws-kms.md)): the `key/awskms` driver as a start-up setting for each of the client assertion and the identity header (`--key PURPOSE=awskms[:KEY]`), tested on an in-process KMS double and against Keycloak. Needs nothing newer from atoom: `key/awskms` 0.3.0. The real-AWS check is part of step 5.
    4. **The conformance suite**: a headless browser through the real flows on every host, with the stand's scenarios.
 4. **First version** for the first sites.
 5. **Lambda:** the sign-in handler behind the Web Adapter and the authorizer as a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)), HTTP API first, then REST API.
@@ -483,4 +483,4 @@ Not decided. The first spike could not settle them without a real AWS account, o
 3. Whether the sluis v2 token exchange takes the access token of a confidential `private_key_jwt` client as subject token (a request to the sluis v2 owners).
 4. Decided: authorizer events do not go through the Lambda Web Adapter; the authorizer is a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)).
 5. Decided: a sign-in fails closed while the audit transport is down, in the first version ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)).
-6. Rotating a signing key on AWS KMS: a new key under the alias takes a restart and the JWKS then publishes it alone, so identity headers of the old key fail briefly at apps with a cached JWKS. Whether to publish the previous key for a while, and how many keys a purpose may have ([0019](decisions/0019-signing-keys-on-aws-kms.md)).
+6. Decided: a signing key on AWS KMS rotates by a restart for now ([0019](decisions/0019-signing-keys-on-aws-kms.md)); the previous key stays in the JWKS for a while, built before the first site that rotates.
