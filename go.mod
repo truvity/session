@@ -10,12 +10,14 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.20
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.2
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.74.1
+	github.com/aws/aws-sdk-go-v2/service/kms v1.63.0
 	github.com/cedar-policy/cedar-go v1.9.3
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/truvity/atoom/common v0.3.0
 	github.com/truvity/atoom/key v0.3.0
+	github.com/truvity/atoom/key/awskms v0.3.0
 	github.com/truvity/atoom/key/software v0.3.0
 	github.com/truvity/atoom/source v0.3.0
 	github.com/truvity/atoom/source/file v0.3.0

@@ -1,7 +1,7 @@
 // Command session is the session service: the sign-in paths and the check, for Envoy over gRPC (--check-grpc) and HTTP
 // (--check-http) and for nginx's auth_request (--check-nginx), with the exchange client and the identity header for the route modes exchange and identity-header.
 //
-//	session serve --config-dir DIR --key-dir DIR --seal-root FILE --dynamodb-table NAME [flags]
+//	session serve --config-dir DIR --seal-root FILE --dynamodb-table NAME [--key-dir DIR] [--key PURPOSE=DRIVER[:KEY] ...] [flags]
 //	session check --site FILE      validate a site file
 //	session seal-root FILE         write a new root key for the local sealer (mode 0600)
 //	session version
@@ -26,9 +26,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	awsdynamodb "github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	awskmsapi "github.com/aws/aws-sdk-go-v2/service/kms"
 	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	"google.golang.org/grpc"
 
+	"github.com/truvity/atoom/key/awskms"
 	sourcev1 "github.com/truvity/atoom/source/gen/atoom/source/v1alpha1"
 
 	"github.com/truvity/session/core"
@@ -110,13 +112,26 @@ type serveFlags struct {
 	listen, admin                            string
 	checkGRPC, checkHTTP, checkNginx         string
 	storeTimeout, exchangeTimeout            time.Duration
+	keys                                     listFlag
+	kmsAliasPrefix, kmsEndpoint              string
 }
+
+// listFlag is a flag that may be given more than once.
+type listFlag []string
+
+func (l *listFlag) String() string     { return strings.Join(*l, ",") }
+func (l *listFlag) Set(v string) error { *l = append(*l, v); return nil }
 
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	var f serveFlags
 	fs.StringVar(&f.configDir, "config-dir", "", "the directory of the source port's file driver: site.jws (the site file, YAML) and the policy bundle")
-	fs.StringVar(&f.keyDir, "key-dir", "", "the state directory of the software key driver (mode 0700)")
+	fs.StringVar(&f.keyDir, "key-dir", "", "the state directory of the software key driver (mode 0700); required when a key purpose is on it")
+	fs.Var(&f.keys, "key", "the key driver of a key purpose (client-assertion, identity-header): PURPOSE=software, PURPOSE=awskms "+
+		"(the KMS key under the alias alias/<kms-alias-prefix>/PURPOSE) or PURPOSE=awskms:KEY (a KMS key ID, key ARN or alias name); "+
+		"repeatable; a purpose not named is on software")
+	fs.StringVar(&f.kmsAliasPrefix, "kms-alias-prefix", "", "the alias prefix of the KMS keys of --key PURPOSE=awskms; empty is session/<site>")
+	fs.StringVar(&f.kmsEndpoint, "kms-endpoint", "", "an AWS KMS endpoint other than AWS's")
 	fs.StringVar(&f.sealRoot, "seal-root", "", "the root key file of the local sealer (session seal-root FILE)")
 	fs.StringVar(&f.environment, "environment", "development", "development, staging or production")
 	fs.StringVar(&f.table, "dynamodb-table", "", "the DynamoDB table of the store driver")
@@ -130,7 +145,7 @@ func serve(args []string) error {
 	fs.DurationVar(&f.exchangeTimeout, "exchange-timeout", core.DefaultExchangeTimeout,
 		"the bound of a check's token exchange (lock, refresh, issuer call); store timeout plus this is shorter than the proxy's timeout for the check")
 	_ = fs.Parse(args)
-	for name, v := range map[string]string{"config-dir": f.configDir, "key-dir": f.keyDir, "seal-root": f.sealRoot, "dynamodb-table": f.table} {
+	for name, v := range map[string]string{"config-dir": f.configDir, "seal-root": f.sealRoot, "dynamodb-table": f.table} {
 		if v == "" {
 			return fmt.Errorf("--%s is required", name)
 		}
@@ -221,18 +236,32 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	keys, err := atoomx.SoftwareKeys(f.keyDir, signin.Purposes(), f.environment)
+	choices, err := atoomx.ParseKeyChoices(f.keys, signin.Purposes())
+	if err != nil {
+		return nil, err
+	}
+	prefix := f.kmsAliasPrefix
+	if prefix == "" {
+		prefix = "session/" + sf.Site
+	}
+	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: signin.Purposes(), Choices: choices, StateDir: f.keyDir, Environment: f.environment,
+		AliasPrefix: prefix, KMS: func() (awskms.API, error) {
+			return awskmsapi.NewFromConfig(cfg, func(o *awskmsapi.Options) {
+				if f.kmsEndpoint != "" {
+					o.BaseEndpoint = aws.String(f.kmsEndpoint)
+				}
+			}), nil
+		}})
 	if err != nil {
 		return nil, err
 	}
 	a.closers = append(a.closers, keys.Stop)
-	signer := signin.Signer{Keys: keys.Keys, Purpose: signin.PurposeClientAssertion}
-	if err := signer.Ensure(ctx); err != nil {
-		return nil, fmt.Errorf("client key: %w", err)
+	signer, identity, err := signin.Signers(ctx, keys)
+	if err != nil {
+		return nil, err
 	}
-	identity := signin.Signer{Keys: keys.Keys, Purpose: signin.PurposeIdentityHeader, Typ: core.IdentityType}
-	if err := identity.Ensure(ctx); err != nil {
-		return nil, fmt.Errorf("identity header key: %w", err)
+	for _, p := range signin.Purposes() {
+		slog.Info("key", "purpose", p.Name, "driver", keys.Driver(p.Name))
 	}
 	issuer, err := exchange.New(ctx, exchange.Options{Issuer: sf.Issuer, ClientID: sf.Client.ID, Asserter: signer})
 	if err != nil {

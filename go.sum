@@ -22,6 +22,8 @@ github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.13.12 h1:nQk
 github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.13.12/go.mod h1:ztmJJelLp9AwON0L4eTypQ6r1eBAcmTTsDACdSbKGkk=
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.12 h1:wzAqMZ2O4+ij9HQqIrk+P9PBGacE0wOTuWB7Mo97//I=
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.12/go.mod h1:/0TfyruByHsOlphzP26xDTRe2DKD0J1I1Uyy2TyP8EI=
+github.com/aws/aws-sdk-go-v2/service/kms v1.63.0 h1:Ovjb0ZSWfm+hPYFgU9BX0Oy7C/ob3EXbCrUUHo9Is98=
+github.com/aws/aws-sdk-go-v2/service/kms v1.63.0/go.mod h1:VMuZyNobzmV/0SRCH5p+0dziD4U5AktOi3TzFMXq1rg=
 github.com/aws/aws-sdk-go-v2/service/signin v1.14.0 h1:bIEk1HfTd3MGzvDa5YOQUodGr96D9+UTnmBLBB8ZJ10=
 github.com/aws/aws-sdk-go-v2/service/signin v1.14.0/go.mod h1:LdwHjKqPE9VCC7sTlWcOAizZx3ZJYjmfwC/EW2tIIAE=
 github.com/aws/aws-sdk-go-v2/service/sso v1.39.5 h1:ANAoa+qt3/9kXnvQVgUyxcTzhzZf4DqaBS+M2DQrELU=
@@ -56,6 +58,8 @@ github.com/truvity/atoom/common v0.3.0 h1:eI3zN7cgmZcwGe3fsGhF2uMvzbikEwZdUf0H24
 github.com/truvity/atoom/common v0.3.0/go.mod h1:j4/sfCnyowvfb+0FP6lFT5tOAU8d/xStWPJZxiy3Rcw=
 github.com/truvity/atoom/key v0.3.0 h1:6nTHEnLlYp5C+1a2vZrx/VcKH62HOoVJ4g+o91rZw9w=
 github.com/truvity/atoom/key v0.3.0/go.mod h1:9CW6GQ2X7anTWebUSu/koUQD+YLuexqoGHl53+jmy/k=
+github.com/truvity/atoom/key/awskms v0.3.0 h1:jcdKvkHayxNR8nT88fTw8UGFfWZjsmcqedx+YvksjTQ=
+github.com/truvity/atoom/key/awskms v0.3.0/go.mod h1:1Tt0ea7YcLK3Ff+Hc0b6dKymu35dmG4jM8n6tjNGIqo=
 github.com/truvity/atoom/key/conformance v0.3.0 h1:EKnt+fcCRMslHIT3BiBIOBHNVZjCrRM0mYbPXVRwQ5U=
 github.com/truvity/atoom/key/conformance v0.3.0/go.mod h1:YJt285T7PO+EniSWadmoxfq80MsNhtbt4qPsgncAfJs=
 github.com/truvity/atoom/key/software v0.3.0 h1:XDLMfpMU/LRqs52+xA6W86sQD7CuLC07+1Rguho3yDg=

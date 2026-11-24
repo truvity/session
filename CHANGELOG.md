@@ -5,6 +5,14 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### Step 3.3: signing keys on AWS KMS
+
+- **The key driver of each signing purpose is a start-up setting** ([0019](docs/decisions/0019-signing-keys-on-aws-kms.md), proposed): `session serve --key client-assertion=awskms` and `--key identity-header=awskms:<key ID, ARN or alias>`, repeatable, on atoom's `key/awskms` driver in-process. A purpose not named stays on the key file (`--key-dir`, now required only then). Without a named key, a purpose's KMS key is the alias `alias/<--kms-alias-prefix>/<purpose>`, `session/<site>` by default; `--kms-endpoint` names another endpoint.
+- session never makes a KMS key: the deployment makes them (`ECC_NIST_P256`, `SIGN_VERIFY`), and the role needs `kms:DescribeKey`, `kms:GetPublicKey` and `kms:Sign`. A missing, disabled or wrong key fails the start.
+- The kid is the key port's `key_id` as before (on KMS the key ARN and the fingerprint); the identity header's 30 s reuse keeps KMS off the request path.
+- New: `internal/kmstest`, an in-process KMS double; the tests count KMS signatures and run sign-in, exchange and the identity header against Keycloak with both keys on it. No test calls AWS.
+- atoom: `key/awskms` added at 0.3.0, the other pins unchanged.
+
 ### Step 3.2: the nginx adapter
 
 - **nginx `auth_request`** ([0018](docs/decisions/0018-nginx-adapter.md), proposed): `session serve --check-nginx` serves the check at `/auth` and the refused exchange's page at `/error-page`. An allow carries the headers to set; every refusal is a 401 with markers (`X-Session-Action`, `X-Session-Status`, `X-Session-Location`, `X-Session-Body`) that `examples/nginx/nginx.conf` turns into the check's own answer and body, as on Envoy.

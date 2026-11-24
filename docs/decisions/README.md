@@ -23,6 +23,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0015](0015-envoy-http-mode-csrf-header-and-step-2-choices.md) | Envoy HTTP mode and the CSRF header; the choices of step 2 (partly supersedes 0011) |
 | [0016](0016-exchange-client-and-identity-header.md) | The exchange client and the identity header: the choices of step 3.1 |
 | [0018](0018-nginx-adapter.md) | The nginx adapter: the choices of step 3.2 (partly supersedes 0011) |
+| [0019](0019-signing-keys-on-aws-kms.md) | Signing keys on AWS KMS: the choices of step 3.3 (proposed) |
 
 ## How the records are kept
 
