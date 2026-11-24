@@ -4,7 +4,8 @@
 // the plan).
 //
 // It holds keys that the test makes (the deployment's keys, under an alias or by ARN), answers DescribeKey, GetPublicKey and Sign
-// as KMS does for an ECC_NIST_P256 SIGN_VERIFY key, counts the Sign calls, and refuses CreateKey: session never makes its keys.
+// as KMS does for an ECC_NIST_P256 SIGN_VERIFY key, and DeriveSharedSecret for an ECC_NIST_P384 KEY_AGREEMENT key (the seal
+// block's wrapping key), counts the Sign and DeriveSharedSecret calls, and refuses CreateKey: session never makes its keys.
 package kmstest
 
 import (
@@ -36,8 +37,8 @@ type KMS struct {
 	aliases map[string]string // alias name to ARN
 	n       int
 
-	// Signs counts the Sign calls that reached the double.
-	Signs atomic.Int64
+	// Signs counts the Sign calls that reached the double; Derives the DeriveSharedSecret calls.
+	Signs, Derives atomic.Int64
 	// Down makes every call fail as an unreachable KMS would (a throttling answer, which the driver maps to unavailable).
 	Down atomic.Bool
 }
@@ -46,6 +47,7 @@ type KMS struct {
 type Key struct {
 	ARN     string
 	Spec    types.KeySpec
+	Usage   types.KeyUsageType
 	State   types.KeyState
 	private *ecdsa.PrivateKey
 }
@@ -58,15 +60,20 @@ func New() *KMS { return &KMS{keys: map[string]*Key{}, aliases: map[string]strin
 // AddKey makes an enabled ECC_NIST_P256 signing key, as the deployment would, and names it by alias when alias is not empty
 // ("alias/..."). It returns the key's ARN.
 func (k *KMS) AddKey(alias string) string {
-	return k.add(alias, types.KeySpecEccNistP256, elliptic.P256())
+	return k.add(alias, types.KeySpecEccNistP256, types.KeyUsageTypeSignVerify, elliptic.P256())
+}
+
+// AddAgreementKey makes an enabled ECC_NIST_P384 KEY_AGREEMENT key: the seal block's wrapping key, as the deployment would.
+func (k *KMS) AddAgreementKey(alias string) string {
+	return k.add(alias, types.KeySpecEccNistP384, types.KeyUsageTypeKeyAgreement, elliptic.P384())
 }
 
 // AddKeyP384 makes an ECC_NIST_P384 signing key: a key of another spec than session's purposes, which the driver refuses.
 func (k *KMS) AddKeyP384(alias string) string {
-	return k.add(alias, types.KeySpecEccNistP384, elliptic.P384())
+	return k.add(alias, types.KeySpecEccNistP384, types.KeyUsageTypeSignVerify, elliptic.P384())
 }
 
-func (k *KMS) add(alias string, spec types.KeySpec, curve elliptic.Curve) string {
+func (k *KMS) add(alias string, spec types.KeySpec, usage types.KeyUsageType, curve elliptic.Curve) string {
 	priv, err := ecdsa.GenerateKey(curve, rand.Reader)
 	if err != nil {
 		panic(err)
@@ -75,7 +82,7 @@ func (k *KMS) add(alias string, spec types.KeySpec, curve elliptic.Curve) string
 	defer k.mu.Unlock()
 	k.n++
 	arn := fmt.Sprintf("%s%08d-0000-4000-8000-000000000000", arnPrefix, k.n)
-	k.keys[arn] = &Key{ARN: arn, Spec: spec, State: types.KeyStateEnabled, private: priv}
+	k.keys[arn] = &Key{ARN: arn, Spec: spec, Usage: usage, State: types.KeyStateEnabled, private: priv}
 	if alias != "" {
 		k.aliases[alias] = arn
 	}
@@ -119,7 +126,7 @@ func (k *KMS) DescribeKey(_ context.Context, in *kms.DescribeKeyInput, _ ...func
 	}
 	created := time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)
 	return &kms.DescribeKeyOutput{KeyMetadata: &types.KeyMetadata{
-		Arn: new(key.ARN), KeyId: new(strings.TrimPrefix(key.ARN, arnPrefix)), KeySpec: key.Spec, KeyUsage: types.KeyUsageTypeSignVerify,
+		Arn: new(key.ARN), KeyId: new(strings.TrimPrefix(key.ARN, arnPrefix)), KeySpec: key.Spec, KeyUsage: key.Usage,
 		KeyState: key.State, Origin: types.OriginTypeAwsKms, CreationDate: &created,
 	}}, nil
 }
@@ -134,7 +141,7 @@ func (k *KMS) GetPublicKey(_ context.Context, in *kms.GetPublicKeyInput, _ ...fu
 	if err != nil {
 		return nil, err
 	}
-	return &kms.GetPublicKeyOutput{KeyId: new(key.ARN), PublicKey: der, KeySpec: key.Spec, KeyUsage: types.KeyUsageTypeSignVerify}, nil
+	return &kms.GetPublicKeyOutput{KeyId: new(key.ARN), PublicKey: der, KeySpec: key.Spec, KeyUsage: key.Usage}, nil
 }
 
 // Sign signs a digest (MessageType DIGEST) with ECDSA_SHA_256 and answers the DER signature, as KMS does.
@@ -148,7 +155,7 @@ func (k *KMS) Sign(_ context.Context, in *kms.SignInput, _ ...func(*kms.Options)
 		return nil, &types.DisabledException{Message: new("disabled")}
 	}
 	if in.MessageType != types.MessageTypeDigest || in.SigningAlgorithm != types.SigningAlgorithmSpecEcdsaSha256 || len(in.Message) != 32 ||
-		key.Spec != types.KeySpecEccNistP256 {
+		key.Spec != types.KeySpecEccNistP256 || key.Usage != types.KeyUsageTypeSignVerify {
 		return nil, &types.InvalidKeyUsageException{Message: new("not an ES256 digest")}
 	}
 	sig, err := ecdsa.SignASN1(rand.Reader, key.private, in.Message)
@@ -175,7 +182,39 @@ func (k *KMS) ScheduleKeyDeletion(context.Context, *kms.ScheduleKeyDeletionInput
 	return nil, errNotMade
 }
 
-// DeriveSharedSecret is refused: session's purposes sign only.
-func (k *KMS) DeriveSharedSecret(context.Context, *kms.DeriveSharedSecretInput, ...func(*kms.Options)) (*kms.DeriveSharedSecretOutput, error) {
-	return nil, &types.InvalidKeyUsageException{Message: new("no key agreement")}
+// DeriveSharedSecret answers the raw ECDH secret (the x coordinate) of a KEY_AGREEMENT key with the peer's SubjectPublicKeyInfo,
+// as KMS does for the algorithm ECDH.
+func (k *KMS) DeriveSharedSecret(_ context.Context, in *kms.DeriveSharedSecretInput, _ ...func(*kms.Options)) (*kms.DeriveSharedSecretOutput, error) {
+	k.Derives.Add(1)
+	key, err := k.find(in.KeyId)
+	if err != nil {
+		return nil, err
+	}
+	if key.State != types.KeyStateEnabled {
+		return nil, &types.DisabledException{Message: new("disabled")}
+	}
+	if key.Usage != types.KeyUsageTypeKeyAgreement || in.KeyAgreementAlgorithm != types.KeyAgreementAlgorithmSpecEcdh {
+		return nil, &types.InvalidKeyUsageException{Message: new("not a key-agreement key")}
+	}
+	pub, err := x509.ParsePKIXPublicKey(in.PublicKey)
+	if err != nil {
+		return nil, &types.InvalidKeyUsageException{Message: new("not a public key")}
+	}
+	peer, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, &types.InvalidKeyUsageException{Message: new("not an EC key")}
+	}
+	pe, err := peer.ECDH()
+	if err != nil {
+		return nil, &types.InvalidKeyUsageException{Message: new("not a P-384 point")}
+	}
+	priv, err := key.private.ECDH()
+	if err != nil {
+		return nil, err
+	}
+	secret, err := priv.ECDH(pe)
+	if err != nil {
+		return nil, &types.InvalidKeyUsageException{Message: new("another curve")}
+	}
+	return &kms.DeriveSharedSecretOutput{KeyId: new(key.ARN), SharedSecret: secret, KeyAgreementAlgorithm: in.KeyAgreementAlgorithm}, nil
 }

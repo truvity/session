@@ -23,7 +23,7 @@ import (
 
 	"github.com/truvity/session/core"
 	"github.com/truvity/session/internal/envoy"
-	"github.com/truvity/session/internal/localseal"
+	"github.com/truvity/session/internal/sealer/sealertest"
 	"github.com/truvity/session/internal/storetest"
 )
 
@@ -37,10 +37,7 @@ func newSite(t *testing.T) *site {
 	mem := storetest.New(nil)
 	items, stop := mem.Client()
 	t.Cleanup(stop)
-	sealer, err := localseal.New(localseal.NewRoot(), core.Purposes())
-	if err != nil {
-		t.Fatal(err)
-	}
+	sealer := sealertest.New(t)
 	c, err := core.New(core.Options{Items: items, Seal: sealer, Issuer: issuer{}, Identity: signer{}, Rules: core.Rules{
 		Site: "docs", Host: "docs.example.test", StoreTimeout: 300 * time.Millisecond,
 		Routes: []core.Route{

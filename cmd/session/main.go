@@ -1,16 +1,13 @@
 // Command session is the session service: the sign-in paths and the check, for Envoy over gRPC (--check-grpc) and HTTP
 // (--check-http) and for nginx's auth_request (--check-nginx), with the exchange client and the identity header for the route modes exchange and identity-header.
 //
-//	session serve --config-dir DIR --seal-root FILE --dynamodb-table NAME [--key-dir DIR] [--key PURPOSE=DRIVER[:KEY] ...] [flags]
+//	session serve --config-dir DIR --dynamodb-table NAME [--key-dir DIR] [--key PURPOSE=DRIVER[:KEY] ...] [flags]
 //	session check --site FILE      validate a site file
-//	session seal-root FILE         write a new root key for the local sealer (mode 0600)
 //	session version
 package main
 
 import (
 	"context"
-	"encoding/hex"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -38,9 +35,9 @@ import (
 	"github.com/truvity/session/internal/audit"
 	"github.com/truvity/session/internal/envoy"
 	"github.com/truvity/session/internal/exchange"
-	"github.com/truvity/session/internal/localseal"
 	"github.com/truvity/session/internal/nginx"
 	"github.com/truvity/session/internal/policy"
+	"github.com/truvity/session/internal/sealer"
 	"github.com/truvity/session/internal/signin"
 	"github.com/truvity/session/internal/site"
 )
@@ -58,8 +55,6 @@ func main() {
 		err = serve(os.Args[2:])
 	case "check":
 		err = check(os.Args[2:])
-	case "seal-root":
-		err = sealRoot(os.Args[2:])
 	case "version", "--version":
 		fmt.Println(version)
 	default:
@@ -72,7 +67,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: session serve|check|seal-root|version (session <command> -h for its flags)")
+	fmt.Fprintln(os.Stderr, "usage: session serve|check|version (session <command> -h for its flags)")
 	os.Exit(2)
 }
 
@@ -91,29 +86,14 @@ func check(args []string) error {
 	return nil
 }
 
-func sealRoot(args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: session seal-root FILE")
-	}
-	f, err := os.OpenFile(args[0], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G703: the operator names the file
-	if err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(f, hex.EncodeToString(localseal.NewRoot())); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
-}
-
 type serveFlags struct {
-	configDir, keyDir, sealRoot, environment string
-	table, endpoint                          string
-	listen, admin                            string
-	checkGRPC, checkHTTP, checkNginx         string
-	storeTimeout, exchangeTimeout            time.Duration
-	keys                                     listFlag
-	kmsAliasPrefix, kmsEndpoint              string
+	configDir, keyDir, environment   string
+	table, endpoint                  string
+	listen, admin                    string
+	checkGRPC, checkHTTP, checkNginx string
+	storeTimeout, exchangeTimeout    time.Duration
+	keys                             listFlag
+	kmsAliasPrefix, kmsEndpoint      string
 }
 
 // listFlag is a flag that may be given more than once.
@@ -127,12 +107,11 @@ func serve(args []string) error {
 	var f serveFlags
 	fs.StringVar(&f.configDir, "config-dir", "", "the directory of the source port's file driver: site.jws (the site file, YAML) and the policy bundle")
 	fs.StringVar(&f.keyDir, "key-dir", "", "the state directory of the software key driver (mode 0700); required when a key purpose is on it")
-	fs.Var(&f.keys, "key", "the key driver of a key purpose (client-assertion, identity-header): PURPOSE=software, PURPOSE=awskms "+
+	fs.Var(&f.keys, "key", "the key driver of a key purpose (client-assertion, identity-header, wrapping): PURPOSE=software, PURPOSE=awskms "+
 		"(the KMS key under the alias alias/<kms-alias-prefix>/PURPOSE) or PURPOSE=awskms:KEY (a KMS key ID, key ARN or alias name); "+
 		"repeatable; a purpose not named is on software")
 	fs.StringVar(&f.kmsAliasPrefix, "kms-alias-prefix", "", "the alias prefix of the KMS keys of --key PURPOSE=awskms; empty is session/<site>")
 	fs.StringVar(&f.kmsEndpoint, "kms-endpoint", "", "an AWS KMS endpoint other than AWS's")
-	fs.StringVar(&f.sealRoot, "seal-root", "", "the root key file of the local sealer (session seal-root FILE)")
 	fs.StringVar(&f.environment, "environment", "development", "development, staging or production")
 	fs.StringVar(&f.table, "dynamodb-table", "", "the DynamoDB table of the store driver")
 	fs.StringVar(&f.endpoint, "dynamodb-endpoint", "", "a DynamoDB endpoint other than AWS's (DynamoDB Local)")
@@ -145,7 +124,7 @@ func serve(args []string) error {
 	fs.DurationVar(&f.exchangeTimeout, "exchange-timeout", core.DefaultExchangeTimeout,
 		"the bound of a check's token exchange (lock, refresh, issuer call); store timeout plus this is shorter than the proxy's timeout for the check")
 	_ = fs.Parse(args)
-	for name, v := range map[string]string{"config-dir": f.configDir, "seal-root": f.sealRoot, "dynamodb-table": f.table} {
+	for name, v := range map[string]string{"config-dir": f.configDir, "dynamodb-table": f.table} {
 		if v == "" {
 			return fmt.Errorf("--%s is required", name)
 		}
@@ -236,15 +215,8 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 		return nil, err
 	}
 	a.closers = append(a.closers, st.Stop)
-	root, err := localseal.ReadRoot(f.sealRoot)
-	if err != nil {
-		return nil, err
-	}
-	sealer, err := localseal.New(root, core.Purposes())
-	if err != nil {
-		return nil, err
-	}
-	choices, err := atoomx.ParseKeyChoices(f.keys, signin.Purposes())
+	keyPurposes := append(signin.Purposes(), sealer.KeyPurposes()...)
+	choices, err := atoomx.ParseKeyChoices(f.keys, keyPurposes)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +224,7 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	if prefix == "" {
 		prefix = "session/" + sf.Site
 	}
-	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: signin.Purposes(), Choices: choices, StateDir: f.keyDir, Environment: f.environment,
+	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: keyPurposes, Choices: choices, StateDir: f.keyDir, Environment: f.environment,
 		AliasPrefix: prefix, KMS: func() (awskms.API, error) {
 			return awskmsapi.NewFromConfig(cfg, func(o *awskmsapi.Options) {
 				if f.kmsEndpoint != "" {
@@ -268,14 +240,20 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range signin.Purposes() {
+	for _, p := range keyPurposes {
 		slog.Info("key", "purpose", p.Name, "driver", keys.Driver(p.Name))
 	}
+	// The seal block keeps its wraps in session's store, under seal/, and its wrapping key on the purpose's key driver.
+	sb, err := sealer.Open(ctx, sealer.Options{Keys: keys.For(sealer.WrappingPurpose), Items: st.Items, Installation: "session/" + sf.Site})
+	if err != nil {
+		return nil, err
+	}
+	a.closers = append(a.closers, sb.Stop)
 	issuer, err := exchange.New(ctx, exchange.Options{Issuer: sf.Issuer, ClientID: sf.Client.ID, Asserter: signer})
 	if err != nil {
 		return nil, err
 	}
-	c, err := core.New(core.Options{Rules: rules, Items: st.Items, Seal: sealer, Policy: pol, Issuer: issuer, Identity: identity,
+	c, err := core.New(core.Options{Rules: rules, Items: st.Items, Seal: sb.Sealer, Policy: pol, Issuer: issuer, Identity: identity,
 		Audit: audit.NewLines(os.Stdout)})
 	if err != nil {
 		return nil, err

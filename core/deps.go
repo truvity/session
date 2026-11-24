@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// Sealer is the part of atoom's seal block that the core uses: Seal, Open and Mac by purpose. The block does not exist yet
-// (decision 0006, "planned in atoom"); internal/localseal stands in for it. The interface is kept to these three calls so
-// that the block replaces the stand-in without a change in the core.
+// Sealer is the part of atoom's seal block that the core uses: Seal, Open and Mac by purpose (decision 0006).
+// internal/sealer is the implementation, over the block's client.
 //
 // aad is the address the value is bound to: a value sealed under one address does not open under another.
 type Sealer interface {
@@ -16,7 +15,7 @@ type Sealer interface {
 	Mac(ctx context.Context, purpose string, data []byte) ([]byte, error)
 }
 
-// The purposes the core declares to the Sealer. Keys are per purpose and installation, never per person.
+// The purposes of the core: internal/sealer declares them to the seal block. Keys are per purpose and installation, never per person.
 const (
 	PurposeSessionRecord = "session-record" // Seal and Open of a session record
 	PurposeSignInRecord  = "signin-record"  // Seal and Open of a sign-in transaction
@@ -24,11 +23,6 @@ const (
 	PurposeLookupKey     = "lookup-key"     // Mac of a sid, a subject, a state, a claimed name or an audience into a store key
 	PurposeExchanged     = "exchanged"      // Seal and Open of a cached token for one API audience
 )
-
-// Purposes lists every purpose the core uses, for a Sealer that wants them declared.
-func Purposes() []string {
-	return []string{PurposeSessionRecord, PurposeSignInRecord, PurposeSessionKey, PurposeLookupKey, PurposeExchanged}
-}
 
 // Issuer is the client of the issuer's token endpoint that the check needs for the route mode exchange (decision 0005): the
 // token exchange of RFC 8693, and the refresh of the sign-in token. internal/exchange is the implementation. An answer of the
