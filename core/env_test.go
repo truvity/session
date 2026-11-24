@@ -113,7 +113,12 @@ func newEnv(t *testing.T, backend string, opts ...option) *env {
 	default:
 		t.Fatalf("unknown backend %s", backend)
 	}
+	// On DynamoDB the block keeps its wraps in the session table, as a deployment does; the double keeps them apart, so that
+	// the tests that count the store's items and calls see only the core's.
 	seal := sealertest.New(t)
+	if backend == "dynamodb" {
+		seal = sealertest.On(t, e.items)
+	}
 	e.seal = seal
 	o := core.Options{Rules: testRules(), Items: e.items, Seal: seal, Audit: e.audit, Now: clk.Now}
 	for _, f := range opts {
