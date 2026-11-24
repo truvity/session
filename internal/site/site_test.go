@@ -22,6 +22,14 @@ session:
   max: 4h
 policy:
   bundle: policy-bundle
+  verify_key:
+    kid: publisher-1
+    public_key: |
+      -----BEGIN PUBLIC KEY-----
+      MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEKwsvu/lKOYwP0gNG9wTasVXZHfp1bEWk
+      oSq/SzJQbWqYGN9urpU1EFl6ypRKdcc8olyuacxsRDML4ZGtDcLA2gcsTUXZGfvL
+      hkPfEOilNuWdXkXOQrrZsO/Retc6BTZk
+      -----END PUBLIC KEY-----
 routes:
   - match: { prefix: /assets/ }
     mode: public
@@ -64,6 +72,9 @@ func TestBadSiteFiles(t *testing.T) {
 		"bad site name":          strings.Replace(good, "site: docs", "site: Docs_1", 1),
 		"own prefix":             strings.Replace(good, "prefix: /assets/", "prefix: /_session/x", 1),
 		"empty bundle":           strings.Replace(good, "bundle: policy-bundle", "bundle: \"\"", 1),
+		"no kid":                 strings.Replace(good, "kid: publisher-1", "kid: \"\"", 1),
+		"no verify key":          good[:strings.Index(good, "  verify_key:")] + good[strings.Index(good, "routes:"):],
+		"a broken verify key":    strings.Replace(good, "MHYw", "MHYx", 1),
 	}
 	for name, text := range cases {
 		if _, err := site.Parse([]byte(text)); err == nil {

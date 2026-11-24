@@ -1,0 +1,7 @@
+{
+ "schema": "entity Group;\nentity User in [Group] {\n  issuer: String,\n  email: String,\n  name: String,\n  groups: Set<String>,\n};\nentity Route {\n  site: String,\n  mode: String,\n};\naction \"GET\", \"HEAD\", \"POST\", \"PUT\", \"PATCH\", \"DELETE\", \"OPTIONS\" appliesTo {\n  principal: [User],\n  resource: [Route],\n  context: { path: String, method: String },\n};\n",
+ "policies": {
+  "everyone-but-admin": "permit (principal, action, resource) unless { resource == Route::\"admin\" };",
+  "admins": "permit (principal in Group::\"admins\", action, resource == Route::\"admin\");"
+ }
+}

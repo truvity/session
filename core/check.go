@@ -223,7 +223,11 @@ func (c *Core) check(ctx context.Context, r Request) Decision {
 			return unavailable("policy")
 		}
 		if !res.Allow {
-			c.Emit(ctx, Event{Kind: EventDenied, Subject: s.Subject, Issuer: s.Issuer, Route: route.Name, Reason: "forbidden", PolicyDigest: res.Digest})
+			reason := "forbidden"
+			if res.Misfit {
+				reason = "misfit"
+			}
+			c.Emit(ctx, Event{Kind: EventDenied, Subject: s.Subject, Issuer: s.Issuer, Route: route.Name, Reason: reason, PolicyDigest: res.Digest})
 			return c.deny(http.StatusForbidden, "forbidden", map[string]string{"error": "forbidden"})
 		}
 	}

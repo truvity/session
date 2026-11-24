@@ -164,6 +164,8 @@ type app struct {
 	core    *core.Core
 	signin  *signin.Handler
 	closers []func()
+	// runners run beside the servers until the context ends: the policy loader's refresh.
+	runners []func(context.Context) error
 }
 
 func (a *app) close() {
@@ -208,10 +210,16 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	}
 	var pol core.Policy
 	if sf.Policy != nil {
-		eng, err := policy.Start(ctx, policy.SourceLoader{Source: src.Source, Name: sf.Policy.Bundle})
+		pub, err := sf.Policy.Publisher()
 		if err != nil {
 			return nil, err
 		}
+		eng, err := policy.Start(ctx, policy.Options{Source: src.Source, Name: sf.Policy.Bundle, Publisher: pub})
+		if err != nil {
+			return nil, err
+		}
+		slog.Info("policy bundle", "digest", eng.Digest())
+		a.runners = append(a.runners, eng.Run)
 		pol = eng
 	}
 	cfg, err := config.LoadDefaultConfig(ctx)
@@ -304,6 +312,13 @@ func (a *app) run(ctx context.Context, f serveFlags) error {
 			ReadHeaderTimeout: 10 * time.Second})
 	}
 	errs := make(chan error, len(servers)+1)
+	for _, r := range a.runners {
+		go func() {
+			if err := r(ctx); err != nil {
+				slog.Error("runner", "error", err.Error())
+			}
+		}()
+	}
 	if f.checkGRPC != "" {
 		ln, err := net.Listen("tcp", f.checkGRPC)
 		if err != nil {

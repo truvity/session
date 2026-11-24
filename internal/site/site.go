@@ -11,9 +11,11 @@ import (
 	"slices"
 	"time"
 
+	atpolicy "github.com/truvity/atoom/policy"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/truvity/session/core"
+	"github.com/truvity/session/internal/policy"
 )
 
 // File is the site file as written.
@@ -44,9 +46,23 @@ type Session struct {
 	Max  string `yaml:"max"`
 }
 
-// Policy names the policy bundle: a document of the source port. Without it the route table decides alone.
+// Policy names the policy bundle, a document of the source port, and the one key that verifies it. Without it the route table
+// decides alone.
 type Policy struct {
-	Bundle string `yaml:"bundle"`
+	Bundle    string    `yaml:"bundle"`
+	VerifyKey VerifyKey `yaml:"verify_key"`
+}
+
+// VerifyKey is the publisher's key the site pins (atoom record 0019): the kid its signature names, and the P-384 public key as
+// PEM (PUBLIC KEY). A key is pinned here and never by a document.
+type VerifyKey struct {
+	KID       string `yaml:"kid"`
+	PublicKey string `yaml:"public_key"`
+}
+
+// Publisher is the pinned key for the policy loader.
+func (p *Policy) Publisher() (atpolicy.Publisher, error) {
+	return policy.PublisherFromPEM(p.VerifyKey.KID, p.VerifyKey.PublicKey)
 }
 
 // Route is one row of the route table.
@@ -118,6 +134,11 @@ func (f *File) Rules() (core.Rules, error) {
 	}
 	if f.Policy != nil && f.Policy.Bundle == "" {
 		errs = append(errs, errors.New("policy.bundle: the name of the bundle document"))
+	}
+	if f.Policy != nil {
+		if _, err := f.Policy.Publisher(); err != nil {
+			errs = append(errs, fmt.Errorf("policy.verify_key: a kid and a P-384 public key (PEM): %w", err))
+		}
 	}
 	if f.ErrorPage != "" && (f.ErrorPage == "site" || (f.Policy != nil && f.ErrorPage == f.Policy.Bundle)) {
 		errs = append(errs, fmt.Errorf("error_page %q: a document of its own", f.ErrorPage))

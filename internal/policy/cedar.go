@@ -1,101 +1,107 @@
-// Package policy decides who may reach a route with Cedar, as a library (decision 0007): cedar-go, in-process, no I/O during a
-// decision.
-//
-// atoom's shared parts around the engine (the signed bundle, the loading rules, the Go loader B5 and the decision test set) do
-// not exist yet. Until they do, a Bundle is a local Cedar policy document loaded through the narrow Loader interface, and
-// Engine keeps what the loading rules of 0007 say that does not need the signed format: compile once, swap atomically, keep
-// the last good set when a reload fails, refuse a cold start without a valid set, and give every decision the digest of its set.
-// Signature verification and strict schema validation are the loader's and wait for it.
+// Package policy decides who may reach a route with Cedar, as a library (decision 0007), on atoom's policy loader (atoom record
+// 0019): the bundle is a signed document of the kind PolicyBundle, read through the source port, verified under the one key the
+// site file pins, validated against its schema in strict mode and swapped in atomically. A failed reload keeps the last good set,
+// a cold start without a valid set is refused, and every decision carries the SHA-384 digest of the payload of its set. A
+// decision does no I/O.
 //
 // The entities of a decision come from the session the check already read and from the route (docs/policy.md):
 //
 //	principal  User::"<subject>"     attrs { issuer, email, name, groups: Set<String> }, parents Group::"<g>" for every group
-//	action     Action::"<METHOD>"    GET, POST, ... as the proxy saw it
+//	action     Action::"<METHOD>"    GET, POST, ... as the proxy saw it; the bundle's schema declares the actions
 //	resource   Route::"<route name>" attrs { site, mode }
 //	context    { path, method }
+//
+// Schema is the schema these entities fit. A bundle's schema may differ; a request that does not fit it is a misfit and a denial.
 package policy
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
-	"maps"
-	"sync/atomic"
+	"log/slog"
 
 	"github.com/cedar-policy/cedar-go"
+	atpolicy "github.com/truvity/atoom/policy"
+	"github.com/truvity/atoom/source/gen/atoom/source/v1alpha1/sourcev1alpha1connect"
 
 	"github.com/truvity/session/core"
 )
 
-// Bundle is one policy document as the loader read it.
-type Bundle struct {
-	Name     string
-	Policies []byte // Cedar policy text
+// Schema is the Cedar schema of the entities session gives a decision: the schema of the example bundle
+// (examples/policy-bundle.json). The actions are the HTTP methods; a bundle that serves other methods declares them.
+const Schema = `entity Group;
+entity User in [Group] {
+  issuer: String,
+  email: String,
+  name: String,
+  groups: Set<String>,
+};
+entity Route {
+  site: String,
+  mode: String,
+};
+action "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS" appliesTo {
+  principal: [User],
+  resource: [Route],
+  context: { path: String, method: String },
+};
+`
+
+// Options are what Start needs.
+type Options struct {
+	// Source is the client of the source port that serves the bundle.
+	Source sourcev1alpha1connect.SourceServiceClient
+	// Name is the document of the bundle (the site file's policy.bundle); atoom's default policy-bundle when empty.
+	Name string
+	// Publisher is the one key the site file pins (policy.verify_key).
+	Publisher atpolicy.Publisher
+	// Log, when set, is told of every reload that is not unchanged; slog's default when nil.
+	Log *slog.Logger
 }
 
-// Loader reads the current bundle. The atoom loader (B5) will replace the local one behind this interface.
-type Loader interface {
-	Load(ctx context.Context) (Bundle, error)
-}
-
-type compiled struct {
-	set    *cedar.PolicySet
-	digest string
-}
-
-// Engine is a compiled policy set that can be swapped while decisions run.
+// Engine is atoom's loader for one bundle, as core.Policy.
 type Engine struct {
-	cur atomic.Pointer[compiled]
+	l *atpolicy.Loader
 }
 
-// Compile parses a bundle into a policy set. The digest is the SHA-256 of the policy text.
-func Compile(b Bundle) (*cedar.PolicySet, string, error) {
-	set, err := cedar.NewPolicySetFromBytes(b.Name, b.Policies)
+// Start reads, verifies and compiles the bundle once. A cold start without a valid set is refused.
+func Start(ctx context.Context, o Options) (*Engine, error) {
+	log := o.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	l, err := atpolicy.New(ctx, atpolicy.Options{Source: o.Source, Name: o.Name, Publishers: []atpolicy.Publisher{o.Publisher},
+		OnReload: func(out atpolicy.Outcome) {
+			level := slog.LevelInfo
+			if out.Result != atpolicy.Applied {
+				level = slog.LevelWarn
+			}
+			attrs := []any{"result", out.Result.String(), "digest", out.Digest, "seq", out.Seq}
+			if out.Err != nil {
+				attrs = append(attrs, "error", out.Err.Error())
+			}
+			log.Log(context.Background(), level, "policy bundle", attrs...)
+		}})
 	if err != nil {
-		return nil, "", fmt.Errorf("policy %s: %w", b.Name, err)
+		return nil, err
 	}
-	if len(maps.Collect(set.All())) == 0 {
-		return nil, "", fmt.Errorf("policy %s: no policy in the bundle", b.Name)
-	}
-	sum := sha256.Sum256(b.Policies)
-	return set, "sha256:" + hex.EncodeToString(sum[:]), nil
+	return &Engine{l: l}, nil
 }
 
-// Start loads and compiles the first set. A cold start without a valid set is refused.
-func Start(ctx context.Context, l Loader) (*Engine, error) {
-	e := &Engine{}
-	if err := e.Reload(ctx, l); err != nil {
-		return nil, fmt.Errorf("policy: no valid set at start: %w", err)
-	}
-	return e, nil
-}
+// Run keeps the set current, as the source says it can (a watch of the file driver), until ctx ends.
+func (e *Engine) Run(ctx context.Context) error { return e.l.Run(ctx) }
 
-// Reload loads and compiles a new set and swaps it in. On any error the last good set stays.
-func (e *Engine) Reload(ctx context.Context, l Loader) error {
-	b, err := l.Load(ctx)
-	if err != nil {
-		return err
-	}
-	set, digest, err := Compile(b)
-	if err != nil {
-		return err
-	}
-	e.cur.Store(&compiled{set: set, digest: digest})
-	return nil
-}
+// Reload is one pass of the loader: read, verify, compile, swap; or keep the set in force.
+func (e *Engine) Reload(ctx context.Context) atpolicy.Outcome { return e.l.Reload(ctx) }
 
-// Digest is the digest of the set in use.
-func (e *Engine) Digest() string {
-	if c := e.cur.Load(); c != nil {
-		return c.digest
-	}
-	return ""
-}
+// Digest is the digest of the set in force: the SHA-384 of its payload, in lower-case hex.
+func (e *Engine) Digest() string { return e.l.Current().Digest() }
 
 // Request builds the Cedar request and entities of a check.
-func Request(in core.PolicyInput) (cedar.Request, cedar.EntityMap) {
+func Request(in core.PolicyInput) atpolicy.Request {
 	user := cedar.NewEntityUID("User", cedar.String(in.Subject))
 	route := cedar.NewEntityUID("Route", cedar.String(in.Route.Name))
 	groups := make([]cedar.Value, 0, len(in.Claims.Groups))
@@ -117,7 +123,7 @@ func Request(in core.PolicyInput) (cedar.Request, cedar.EntityMap) {
 		"site": cedar.String(in.Site),
 		"mode": cedar.String(string(in.Route.Mode)),
 	})}
-	req := cedar.Request{
+	return atpolicy.Request{
 		Principal: user,
 		Action:    cedar.NewEntityUID("Action", cedar.String(in.Method)),
 		Resource:  route,
@@ -125,22 +131,37 @@ func Request(in core.PolicyInput) (cedar.Request, cedar.EntityMap) {
 			"path":   cedar.String(in.Path),
 			"method": cedar.String(in.Method),
 		}),
+		Entities: entities,
 	}
-	return req, entities
 }
 
-var errNoSet = errors.New("policy: no set loaded")
-
-// Decide implements core.Policy. An evaluation error in a policy makes that policy not apply, as Cedar defines; the
-// decision is a deny unless another policy permits.
+// Decide implements core.Policy. A policy that errors counts as neither permit nor forbid, as Cedar defines. A request that
+// does not fit the bundle's schema (an action it does not declare, say) is a denial with Misfit set.
 func (e *Engine) Decide(_ context.Context, in core.PolicyInput) (core.PolicyResult, error) {
-	c := e.cur.Load()
-	if c == nil {
-		return core.PolicyResult{}, errNoSet
+	d, err := e.l.Decide(Request(in))
+	var misfit *atpolicy.Misfit
+	if errors.As(err, &misfit) {
+		return core.PolicyResult{Allow: false, Misfit: true, Digest: d.Digest}, nil
 	}
-	req, entities := Request(in)
-	d, _ := cedar.Authorize(c.set, entities, req)
-	return core.PolicyResult{Allow: d == cedar.Allow, Digest: c.digest}, nil
+	if err != nil {
+		return core.PolicyResult{}, err
+	}
+	return core.PolicyResult{Allow: d.Allow, Digest: d.Digest}, nil
 }
 
 var _ core.Policy = (*Engine)(nil)
+
+// PublisherFromPEM is the pinned key of the site file: a kid and a P-384 public key, PEM "PUBLIC KEY" (a SubjectPublicKeyInfo).
+func PublisherFromPEM(kid, text string) (atpolicy.Publisher, error) {
+	if kid == "" {
+		return atpolicy.Publisher{}, errors.New("policy: the kid of the verify key is required")
+	}
+	block, rest := pem.Decode([]byte(text))
+	if block == nil || block.Type != "PUBLIC KEY" || len(bytes.TrimSpace(rest)) != 0 {
+		return atpolicy.Publisher{}, errors.New("policy: the verify key is one PEM block of the type PUBLIC KEY")
+	}
+	if _, err := x509.ParsePKIXPublicKey(block.Bytes); err != nil {
+		return atpolicy.Publisher{}, fmt.Errorf("policy: the verify key: %w", err)
+	}
+	return atpolicy.PublisherFromSPKI(kid, block.Bytes)
+}
