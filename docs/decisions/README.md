@@ -25,6 +25,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0018](0018-nginx-adapter.md) | The nginx adapter: the choices of step 3.2 (partly supersedes 0011) |
 | [0019](0019-signing-keys-on-aws-kms.md) | Signing keys on AWS KMS: the choices of step 3.3 |
 | [0020](0020-conformance-suite.md) | The conformance suite: the choices of step 3.4 |
+| [0021](0021-atoom-policy-loader-and-seal-block.md) | atoom's policy loader and seal block: the choices of the move to atoom 0.5.0 |
 
 ## How the records are kept
 

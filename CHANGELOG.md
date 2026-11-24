@@ -5,6 +5,16 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### atoom 0.5.0: the policy loader and the seal block
+
+- **atoom 0.5.0** for every atoom module (`common`, `key`, `key/awskms`, `key/software`, `source`, `source/file`, `store`, `store/dynamodb`, `socket`), and two new ones: `policy` and `blocks/seal` ([0021](docs/decisions/0021-atoom-policy-loader-and-seal-block.md), proposed). `spike/` keeps the pins it ran with.
+- **The policy bundle is atoom's signed bundle**, loaded by atoom's `policy` library in place of the interim loader: a JWS of the kind `PolicyBundle` (ES384), read through the source port as `policy-bundle`, verified under the one key the site file pins, validated against its schema in strict mode, swapped in atomically and refreshed on the file driver's watch. A failed reload keeps the last good set; a cold start without a valid set refuses to run.
+- **Breaking, site file:** `policy.verify_key` is required with `policy.bundle`: a `kid` and the publisher's P-384 public key as PEM. `policy-bundle.jws` is now the signed document, not Cedar text; its payload carries the schema and the policies by id (`examples/policy-bundle.json`, with session's schema, `internal/policy.Schema`).
+- **Breaking, audit:** `policy_digest` is the SHA-384 of the bundle's payload in lower-case hex (96 characters), in place of `sha256:` and the SHA-256 of the Cedar text. A request that does not fit the bundle's schema is a 403, audited as `denied` with the reason `misfit`.
+- **Sealing is atoom's `seal` block**, in place of the local sealer: data keys for each purpose of the installation `session/<site>`, wrapped by the new key purpose `wrapping` (ECDH-P384: the key file, or `--key wrapping=awskms` on an `ECC_NIST_P384` `KEY_AGREEMENT` key with `kms:DeriveSharedSecret`), with the wraps in session's store under `seal/`. Store keys are HMAC-SHA384.
+- **Breaking, start-up:** `--seal-root` and `session seal-root` are gone. Items sealed by the local sealer do not open, and the store keys change: nothing is deployed, so nothing is migrated.
+- New: `internal/sealer` (and `sealertest`), `internal/policy/policytest`, which signs bundles in tests; the KMS double answers `DeriveSharedSecret` for a key-agreement key.
+
 ### Step 3.4: the conformance suite
 
 - **The conformance suite** ([0020](docs/decisions/0020-conformance-suite.md), proposed): `conformance/`, one set of scenarios run in a real headless browser (Chromium's headless shell 157, pinned by digest, driven by chromedp) against Keycloak through Envoy over gRPC, Envoy over HTTP and nginx, each running its example configuration as it is.
