@@ -1,6 +1,6 @@
 # 0018. The nginx adapter: the choices of step 3.2
 
-Status: proposed (the owner accepts it with the pull request that builds it)
+Status: accepted, 2026-11-24 (owner decision on the pull request of step 3.2); partly supersedes [0011](0011-host-adapter-rules.md)
 Date: 2026-11-24
 
 Builds the nginx rules of [0011](0011-host-adapter-rules.md), corrects how its `$uri$is_args$args` rule is written, and, if accepted, partly supersedes it: nginx shows a failure of the check as 503, not 500.
