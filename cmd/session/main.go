@@ -1,5 +1,5 @@
 // Command session is the session service: the sign-in paths and the check, for Envoy over gRPC (--check-grpc) and HTTP
-// (--check-http), with the exchange client and the identity header for the route modes exchange and identity-header.
+// (--check-http) and for nginx's auth_request (--check-nginx), with the exchange client and the identity header for the route modes exchange and identity-header.
 //
 //	session serve --config-dir DIR --key-dir DIR --seal-root FILE --dynamodb-table NAME [flags]
 //	session check --site FILE      validate a site file
@@ -37,6 +37,7 @@ import (
 	"github.com/truvity/session/internal/envoy"
 	"github.com/truvity/session/internal/exchange"
 	"github.com/truvity/session/internal/localseal"
+	"github.com/truvity/session/internal/nginx"
 	"github.com/truvity/session/internal/policy"
 	"github.com/truvity/session/internal/signin"
 	"github.com/truvity/session/internal/site"
@@ -107,7 +108,7 @@ type serveFlags struct {
 	configDir, keyDir, sealRoot, environment string
 	table, endpoint                          string
 	listen, admin                            string
-	checkGRPC, checkHTTP                     string
+	checkGRPC, checkHTTP, checkNginx         string
 	storeTimeout, exchangeTimeout            time.Duration
 }
 
@@ -123,6 +124,7 @@ func serve(args []string) error {
 	fs.StringVar(&f.listen, "listen", ":8080", "the address of the sign-in paths")
 	fs.StringVar(&f.checkGRPC, "check-grpc", ":9001", "the address of Envoy's gRPC external authorisation; empty turns it off")
 	fs.StringVar(&f.checkHTTP, "check-http", "", "the address of Envoy's HTTP external authorisation (path prefix /check); empty turns it off")
+	fs.StringVar(&f.checkNginx, "check-nginx", "", "the address of nginx's auth_request check (paths /auth and /error-page); empty turns it off")
 	fs.StringVar(&f.admin, "admin", "127.0.0.1:9090", "the address of /metrics and /healthz")
 	fs.DurationVar(&f.storeTimeout, "store-timeout", core.DefaultStoreTimeout, "the timeout of every store call; shorter than the proxy's timeout for the check")
 	fs.DurationVar(&f.exchangeTimeout, "exchange-timeout", core.DefaultExchangeTimeout,
@@ -267,6 +269,10 @@ func (a *app) run(ctx context.Context, f serveFlags) error {
 	}
 	if f.checkHTTP != "" {
 		servers = append(servers, &http.Server{Addr: f.checkHTTP, Handler: &envoy.HTTP{Core: a.core, Prefix: "/check"}, ReadHeaderTimeout: 10 * time.Second})
+	}
+	if f.checkNginx != "" {
+		servers = append(servers, &http.Server{Addr: f.checkNginx, Handler: &nginx.Handler{Core: a.core, ErrorPage: a.core.Rules().ErrorPage},
+			ReadHeaderTimeout: 10 * time.Second})
 	}
 	errs := make(chan error, len(servers)+1)
 	if f.checkGRPC != "" {
