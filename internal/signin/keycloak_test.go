@@ -20,10 +20,13 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 
+	"github.com/truvity/atoom/key/awskms"
+
 	"github.com/truvity/session/core"
 	"github.com/truvity/session/internal/atoomx"
 	"github.com/truvity/session/internal/exchange"
 	"github.com/truvity/session/internal/kctest"
+	"github.com/truvity/session/internal/kmstest"
 	"github.com/truvity/session/internal/localseal"
 	"github.com/truvity/session/internal/signin"
 	"github.com/truvity/session/internal/storetest"
@@ -46,10 +49,12 @@ type stand struct {
 	ahead    atomic.Int64 // how far the core's clock runs ahead of the wall clock, in nanoseconds
 }
 
-// standConfig is what a test may change in its stand: the API audiences of the realm and the route table.
+// standConfig is what a test may change in its stand: the API audiences of the realm, the route table, and the key drivers
+// (both purposes on the in-process KMS double when kms is set, else in key files).
 type standConfig struct {
 	audiences []string
 	routes    []core.Route
+	kms       *kmstest.KMS
 }
 
 type events struct {
@@ -124,13 +129,23 @@ func newStand(t *testing.T, opts ...func(*standConfig)) *stand {
 	if err := os.Chmod(keyDir, 0o700); err != nil { //nolint:gosec // G302: a directory needs its x bit // the key driver wants its state directory private
 		t.Fatal(err)
 	}
-	keys, err := atoomx.SoftwareKeys(keyDir, signin.Purposes(), "development")
+	var keyFlags []string
+	if cfg.kms != nil {
+		keyFlags = []string{"client-assertion=awskms", "identity-header=awskms:" + cfg.kms.AddKey("")}
+		cfg.kms.AddKey("alias/session/docs/client-assertion")
+	}
+	choices, err := atoomx.ParseKeyChoices(keyFlags, signin.Purposes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: signin.Purposes(), Choices: choices, StateDir: keyDir, Environment: "development",
+		AliasPrefix: "session/docs", KMS: func() (awskms.API, error) { return cfg.kms, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(keys.Stop)
-	signer := signin.Signer{Keys: keys.Keys, Purpose: signin.PurposeClientAssertion}
-	if err := signer.Ensure(ctx); err != nil {
+	signer, identity, err := signin.Signers(ctx, keys)
+	if err != nil {
 		t.Fatal(err)
 	}
 	jwk, err := signer.JWK(ctx)
@@ -150,10 +165,6 @@ func newStand(t *testing.T, opts ...func(*standConfig)) *stand {
 		BackChannelURL: st.back.URL + core.PathBackChannel, JWKS: string(jwks),
 		People: []kctest.Person{st.person}, Audiences: cfg.audiences,
 	})
-	identity := signin.Signer{Keys: keys.Keys, Purpose: signin.PurposeIdentityHeader, Typ: core.IdentityType}
-	if err := identity.Ensure(ctx); err != nil {
-		t.Fatal(err)
-	}
 	issuer, err := exchange.New(ctx, exchange.Options{Issuer: st.issuer, ClientID: "session-docs", Asserter: signer})
 	if err != nil {
 		t.Fatal(err)
@@ -626,5 +637,48 @@ func TestTheIdentityHeaderVerifiesWithTheJWKS(t *testing.T) {
 	if c.Iss != st.core.Origin() || c.Aud != "legacy-app" || c.Sub == "" || c.Email != st.person.Email ||
 		!slices.Equal(c.Groups, []string{"admins"}) || c.Exp-c.Iat != 60 {
 		t.Fatalf("claims %+v", c)
+	}
+}
+
+// Both keys on AWS KMS (atoom's key/awskms over the in-process KMS double; no AWS is called): Keycloak takes the client
+// assertion signed in KMS, whose kid is the key ARN and the fingerprint, for PAR, the code and the token exchange; the identity
+// header verifies with the JWKS; the JWKS publishes the two KMS keys.
+func TestKeysOnAWSKMSAgainstKeycloak(t *testing.T) {
+	fake := kmstest.New()
+	st := newStand(t, exchangeRoutes, func(c *standConfig) { c.kms = fake })
+	set := st.jwks(t)
+	if len(set.Keys) != 2 {
+		t.Fatalf("jwks %+v", set)
+	}
+	for _, k := range set.Keys {
+		if !strings.HasPrefix(k.KeyID, "arn:aws:kms:") || k.Algorithm != "ES256" {
+			t.Fatalf("key %+v", k)
+		}
+	}
+	b := st.browser(t)
+	signs := fake.Signs.Load()
+	st.signIn(t, b, "/")
+	id := st.sessionCookie(b)
+	if id == "" {
+		t.Fatal("no session")
+	}
+	if fake.Signs.Load() == signs {
+		t.Fatal("the client assertion was not signed in KMS")
+	}
+	d := st.check(t, id, "/api/billing/x")
+	if d.Outcome != core.Allow || !strings.HasPrefix(d.Set["authorization"], "Bearer ") {
+		t.Fatalf("exchange: %+v %s", d, d.Body)
+	}
+	d = st.check(t, id, "/legacy/x")
+	sig, err := jose.ParseSignedCompact(d.Set[core.IdentityHeader], []jose.SignatureAlgorithm{jose.ES256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := set.Key(sig.Signatures[0].Protected.KeyID)
+	if len(keys) != 1 {
+		t.Fatalf("the kid %q is not in the JWKS", sig.Signatures[0].Protected.KeyID)
+	}
+	if _, err := sig.Verify(keys[0]); err != nil {
+		t.Fatal(err)
 	}
 }

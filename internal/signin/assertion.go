@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"connectrpc.com/connect"
@@ -36,6 +37,26 @@ func Purposes() []purpose.Declaration {
 		{Name: PurposeClientAssertion, Algorithm: purpose.ES256, Operations: sign},
 		{Name: PurposeIdentityHeader, Algorithm: purpose.ES256, Operations: sign},
 	}
+}
+
+// KeyClients gives the client of the key driver that holds a purpose: each purpose may be on its own driver, software or AWS KMS,
+// chosen at start (decision 0019). atoomx.KeySet is one.
+type KeyClients interface {
+	For(purpose string) keyv1alpha1connect.KeyStoreServiceClient
+}
+
+// Signers returns the signer of the client assertion and the signer of the identity header, each on its purpose's driver, and
+// makes sure each key exists. A key on AWS KMS is never made here: one the deployment has not made fails the start.
+func Signers(ctx context.Context, keys KeyClients) (client, identity Signer, err error) {
+	client = Signer{Keys: keys.For(PurposeClientAssertion), Purpose: PurposeClientAssertion}
+	if err := client.Ensure(ctx); err != nil {
+		return Signer{}, Signer{}, fmt.Errorf("client key (%s): %w", PurposeClientAssertion, err)
+	}
+	identity = Signer{Keys: keys.For(PurposeIdentityHeader), Purpose: PurposeIdentityHeader, Typ: core.IdentityType}
+	if err := identity.Ensure(ctx); err != nil {
+		return Signer{}, Signer{}, fmt.Errorf("identity header key (%s): %w", PurposeIdentityHeader, err)
+	}
+	return client, identity, nil
 }
 
 // Signer signs JWTs with a key of the key port. The key never leaves the driver: the signer hashes, the port signs the digest,
