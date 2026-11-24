@@ -113,8 +113,9 @@ func (k *KeySet) Stop() {
 
 // OpenKeys mounts one driver of each kind that holds a purpose, each declared only the purposes it holds, so a driver refuses
 // the others. The KMS driver never makes a key (CreateKeys off): the deployment makes the keys and holds their key policy, and the
-// role of session needs kms:DescribeKey, kms:GetPublicKey and kms:Sign only. Nothing is called here; Ensure of each purpose
-// (signin.Signer.Ensure) finds its key at start.
+// role of session needs kms:DescribeKey and kms:GetPublicKey, kms:Sign for a signing purpose and kms:DeriveSharedSecret for the
+// seal block's wrapping key (ECC_NIST_P384, KEY_AGREEMENT). Nothing is called here; Ensure of each purpose (signin.Signer.Ensure,
+// sealer.Open) finds its key at start.
 func OpenKeys(o KeyOptions) (*KeySet, error) {
 	ks := &KeySet{clients: map[string]keyv1alpha1connect.KeyStoreServiceClient{}, drivers: map[string]string{}}
 	ok := false

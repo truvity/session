@@ -19,7 +19,7 @@ import (
 
 	"github.com/truvity/session/core"
 	"github.com/truvity/session/internal/atoomx"
-	"github.com/truvity/session/internal/localseal"
+	"github.com/truvity/session/internal/sealer/sealertest"
 	"github.com/truvity/session/internal/storetest"
 )
 
@@ -113,10 +113,7 @@ func newEnv(t *testing.T, backend string, opts ...option) *env {
 	default:
 		t.Fatalf("unknown backend %s", backend)
 	}
-	seal, err := localseal.New(localseal.NewRoot(), core.Purposes())
-	if err != nil {
-		t.Fatal(err)
-	}
+	seal := sealertest.New(t)
 	e.seal = seal
 	o := core.Options{Rules: testRules(), Items: e.items, Seal: seal, Audit: e.audit, Now: clk.Now}
 	for _, f := range opts {
