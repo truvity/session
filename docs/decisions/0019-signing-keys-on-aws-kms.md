@@ -1,6 +1,6 @@
 # 0019. Signing keys on AWS KMS: the choices of step 3.3
 
-Status: proposed
+Status: accepted, 2026-11-24 (owner decision on the pull request of step 3.3)
 Date: 2026-11-24
 
 Builds what [0005](0005-tokens-per-api-and-issuers.md) and [0006](0006-built-on-atoom.md) decide for the key port: the `private_key_jwt` key, and the key of the identity header of [0016](0016-exchange-client-and-identity-header.md), on atoom's `key/awskms` driver where the key must not leave, chosen at start.
@@ -31,9 +31,11 @@ atoom's `key/awskms` (atoom 0.3.0; 0.4.0 and 0.5.0 change nothing in it but its 
 - **Sealing** stays on the local sealer (`internal/localseal`). Moving it onto atoom's `seal` block, whose data keys are wrapped through the key port's `Ecdh` (on KMS a key-agreement key), is its own change.
 - **The atoom pins** stay at 0.3.0: `key/awskms` is added at 0.3.0, the same driver as 0.5.0's.
 
-### Open: rotating a key on KMS
+### Rotating a key on KMS (decided)
 
 The driver reads a key once and keeps its ARN, so a new key under the alias takes a restart, and the JWKS then publishes the new key only. An identity header signed by the old key in its last minute, held by an app that has not yet fetched the new JWKS (`max-age=300`), fails at that app; the issuer refetches its JWKS on an unknown kid. The software driver has the same shape today. Whether to publish the previous key for a while, and how many keys a purpose may have, is for the owner; nothing in this step depends on it.
+
+Decided by the owner on the pull request: the restart-only rotation is accepted for now. Before the first site that rotates a signing key, the JWKS also publishes the previous key of a purpose for a while after a rotation (a second key per purpose and a way to name it); that build is its own change. The kid keeps the key ARN (the row below on a kid that session makes stays a road not taken): the account id and region in the public JWKS are accepted.
 
 ## Consequences
 
