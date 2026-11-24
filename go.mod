@@ -12,6 +12,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.74.1
 	github.com/aws/aws-sdk-go-v2/service/kms v1.63.0
 	github.com/cedar-policy/cedar-go v1.9.3
+	github.com/chromedp/cdproto v0.159.0
+	github.com/chromedp/chromedp v0.22.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	github.com/go-jose/go-jose/v4 v4.1.9
