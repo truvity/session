@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/truvity/session/core"
-	"github.com/truvity/session/internal/policy"
+	"github.com/truvity/session/internal/policy/policytest"
 )
 
 func body(t *testing.T, d core.Decision) map[string]string {
@@ -265,22 +265,13 @@ func TestIdleRefreshAtMostOncePerMinute(t *testing.T) {
 	}
 }
 
-func cedarEngine(t *testing.T, text string) *policy.Engine {
-	t.Helper()
-	eng, err := policy.Start(context.Background(), policy.Static{Name: "test", Policies: []byte(text)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return eng
-}
-
 // Cedar decides who may reach a route (decision 0007), from the session the check already read; a denial is a 403 and a
-// security-audit event with the digest of the policy set.
+// security-audit event with the digest of the policy set: the SHA-384 of its payload, in hex.
 func TestPolicyDecidesWhoMayReachARoute(t *testing.T) {
-	eng := cedarEngine(t, `
-permit (principal, action, resource) unless { resource == Route::"admin" };
-permit (principal in Group::"admins", action, resource == Route::"admin");
-`)
+	eng := policytest.Engine(t, map[string]string{
+		"everyone-but-admin": `permit (principal, action, resource) unless { resource == Route::"admin" };`,
+		"admins":             `permit (principal in Group::"admins", action, resource == Route::"admin");`,
+	})
 	e := newEnv(t, "storetest", func(o *core.Options) { o.Policy = eng })
 	alice := e.signIn(t, "alice", "sid-a", "admins")
 	bob := e.signIn(t, "bob", "sid-b", "staff")
@@ -297,7 +288,15 @@ permit (principal in Group::"admins", action, resource == Route::"admin");
 	}
 	evs := e.audit.Events()
 	if len(evs) != 1 || evs[0].Kind != core.EventDenied || evs[0].Subject != "bob" || evs[0].Route != "admin" ||
-		evs[0].PolicyDigest != eng.Digest() || !strings.HasPrefix(evs[0].PolicyDigest, "sha256:") || evs[0].Site != "docs" {
+		evs[0].PolicyDigest != eng.Digest() || len(evs[0].PolicyDigest) != 96 || evs[0].Site != "docs" {
+		t.Fatalf("events %+v", evs)
+	}
+	// A method the bundle's schema does not declare does not fit it: a denial, audited as a misfit.
+	d = e.core.Check(ctx, req("PROPFIND", "/admin/x", "Cookie", e.cookie(alice), core.CSRFHeader, core.CSRFValue, "Sec-Fetch-Site", "same-origin"))
+	if d.Status != http.StatusForbidden || d.Reason != "forbidden" {
+		t.Fatalf("a misfit: %+v", d)
+	}
+	if evs := e.audit.Events(); len(evs) != 2 || evs[1].Reason != "misfit" || evs[1].PolicyDigest != eng.Digest() {
 		t.Fatalf("events %+v", evs)
 	}
 }

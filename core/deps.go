@@ -84,9 +84,11 @@ type PolicyInput struct {
 	Claims  Claims
 }
 
-// PolicyResult is a decision and the digest of the policy set that made it, for the audit event.
+// PolicyResult is a decision and the digest of the policy set that made it, for the audit event. Misfit says that the request
+// did not fit the schema of the set: a denial, audited with the reason misfit.
 type PolicyResult struct {
 	Allow  bool
+	Misfit bool
 	Digest string
 }
 

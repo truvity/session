@@ -12,7 +12,15 @@ session:
   idle: 30m
   max: 8h
 policy:
-  bundle: policy-bundle        # the document policy-bundle.jws next to site.jws: Cedar text (docs/policy.md)
+  bundle: policy-bundle        # the document policy-bundle.jws next to site.jws: a signed bundle (docs/policy.md)
+  verify_key:                  # the one publisher key the site pins; replace it with your publisher's
+    kid: publisher-1
+    public_key: |
+      -----BEGIN PUBLIC KEY-----
+      MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEKwsvu/lKOYwP0gNG9wTasVXZHfp1bEWk
+      oSq/SzJQbWqYGN9urpU1EFl6ypRKdcc8olyuacxsRDML4ZGtDcLA2gcsTUXZGfvL
+      hkPfEOilNuWdXkXOQrrZsO/Retc6BTZk
+      -----END PUBLIC KEY-----
 # error_page: error-page       # optional: the page (error-page.jws, HTML) a navigation gets when an exchange is refused
 routes:
   - match: { prefix: /assets/ }
