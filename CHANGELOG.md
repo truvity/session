@@ -5,6 +5,14 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### Step 3.4: the conformance suite
+
+- **The conformance suite** ([0020](docs/decisions/0020-conformance-suite.md), proposed): `conformance/`, one set of scenarios run in a real headless browser (Chromium's headless shell 157, pinned by digest, driven by chromedp) against Keycloak through Envoy over gRPC, Envoy over HTTP and nginx, each running its example configuration as it is.
+- The scenarios: a public route and the JSON 401; the sign-in redirect, Keycloak's form and the callback, with the S1 cookie read from the browser; a protected route with header stripping; the sign-in prefix; CSRF with and without the header; the exchange and identity-header routes, verified against the realm and `/_session/jwks`; a refused exchange; a store outage; bad paths; logout and Keycloak's end-session; back-channel logout; a refresh refused after an unseen logout, with the cookie cleared by the check.
+- Where hosts differ by design, the suite asserts each host's answer: the empty 503 of Envoy's HTTP mode, Envoy's normalised dot segments and its own 400 on an encoded slash or backslash, nginx's 400 `bad_path` and the raw merged-slash path it passes the site.
+- API Gateway and the Lambda authorizer are not in it: they need AWS, and run the scenarios in step 5's real-AWS check.
+- New: `just test-conformance`, and the CI job `conformance`; `go.mod` adds chromedp v0.22.0 (tests only).
+
 ### Step 3.3: signing keys on AWS KMS
 
 - **The key driver of each signing purpose is a start-up setting** ([0019](docs/decisions/0019-signing-keys-on-aws-kms.md), proposed): `session serve --key client-assertion=awskms` and `--key identity-header=awskms:<key ID, ARN or alias>`, repeatable, on atoom's `key/awskms` driver in-process. A purpose not named stays on the key file (`--key-dir`, now required only then). Without a named key, a purpose's KMS key is the alias `alias/<--kms-alias-prefix>/<purpose>`, `session/<site>` by default; `--kms-endpoint` names another endpoint.

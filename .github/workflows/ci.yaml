@@ -54,6 +54,19 @@ jobs:
       - uses: truvity/ci-actions/setup-devbox@82e404675ef3f826755e2939d1072cddcd07ed26 # v3.9.0
       - run: devbox run -- just test-dynamodb test-keycloak test-envoy test-nginx
 
+  # The conformance suite: the same browser scenarios through Envoy (gRPC and HTTP) and nginx, in a headless browser against a
+  # test Keycloak. Its own job, so it runs beside the integration job rather than after it.
+  conformance:
+    name: conformance (browser, every host)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: truvity/ci-actions/setup-devbox@82e404675ef3f826755e2939d1072cddcd07ed26 # v3.9.0
+      - run: devbox run -- just test-conformance
+
   vuln:
     name: known vulnerabilities
     runs-on: ubuntu-24.04
@@ -68,7 +81,7 @@ jobs:
   check:
     name: check
     if: ${{ always() }}
-    needs: [lint, test, integration, vuln]
+    needs: [lint, test, integration, conformance, vuln]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

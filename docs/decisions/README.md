@@ -24,6 +24,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0016](0016-exchange-client-and-identity-header.md) | The exchange client and the identity header: the choices of step 3.1 |
 | [0018](0018-nginx-adapter.md) | The nginx adapter: the choices of step 3.2 (partly supersedes 0011) |
 | [0019](0019-signing-keys-on-aws-kms.md) | Signing keys on AWS KMS: the choices of step 3.3 |
+| [0020](0020-conformance-suite.md) | The conformance suite: the choices of step 3.4 (proposed) |
 
 ## How the records are kept
 

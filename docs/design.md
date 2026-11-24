@@ -380,7 +380,7 @@ Paths are planned ([0003](decisions/0003-repository-contents.md)).
 | Example host configs: Envoy `SecurityPolicy`, nginx, API Gateway | `examples/` |
 | The site file schema, the `session check` validator and generator | `schema/`, `cmd/session` |
 | Browser helper in TypeScript: `apiFetch` (401 gives a re-login hint), `whoami`, `signOut` as POST with CSRF | `web/` |
-| Conformance suite: headless browser, run in CI against a test sluis and a test Keycloak | `conformance/` |
+| Conformance suite: headless browser, run in CI through every host against a test Keycloak (a test sluis at step 6) | `conformance/` |
 | The route policy cases and the policy bundle of the examples | `policy/` |
 | Docs: site file reference, "put a site behind it" guide, threat model | `docs/` |
 
@@ -429,7 +429,9 @@ The full model goes into `docs/threat-model.md` with the first code.
 
 ## 14. Testing
 
-The conformance suite drives a headless browser through the real flows: sign-in, an API call with a 401 and re-login, CSRF refusal, logout, back-channel logout across two replicas, session expiry, header stripping, and policy decisions. It runs in CI against a test sluis and a test Keycloak, with each host adapter in turn. The dot-segment cases and the header-stripping cases run on every host. It uses TLS or a real browser, not a Go cookie jar over plain HTTP (a jar does not send `Secure` cookies over HTTP). It also carries the scenarios and the Keycloak findings of the group SSO reference stand ([0013](decisions/0013-reference-stand.md)). The policy decisions are checked with atoom's decision test set.
+The conformance suite (`conformance/`, `just test-conformance`, [0020](decisions/0020-conformance-suite.md)) drives a real headless browser (Chromium's headless shell, through chromedp) through the real flows, with each host in turn: Envoy over gRPC, Envoy over HTTP and nginx, each running its example configuration as it is, against a test Keycloak. The steps are the same on every host: a public route and the JSON 401 without a session; the sign-in redirect, Keycloak's form and the callback, with the S1 cookie read from the browser; a protected route with header stripping (S8); the sign-in prefix without a check; CSRF with and without the header (S5); the exchange and identity-header routes, verified against the realm and `/_session/jwks`; a refused exchange; a store outage (503); the dot-segment, encoded-dot, encoded-slash and merged-slash paths; the logout and Keycloak's end-session (S6); back-channel logout; and a refresh refused after a logout the issuer did not send. Where the hosts differ by design (a 503 without its body in Envoy's HTTP mode, nginx's 400 on a bad path and its single `Set-Cookie`), the suite asserts each host's answer. The browser is on TLS, because the cookie is `Secure` and the CSRF rule wants an `https` origin; the bad paths are sent outside the browser, which would normalise them.
+
+Not yet in the suite: the API Gateway authorizer (step 5, in a real account), a test sluis (step 6), back-channel logout across two replicas, session expiry in the browser, and policy decisions, which are checked with atoom's decision test set once the loader exists. The suite also carries the Keycloak findings of the group SSO reference stand ([0013](decisions/0013-reference-stand.md)) that are built: a redirect only on a navigation, and `id_token_hint` at logout.
 
 ## 15. Decisions
 
@@ -453,6 +455,7 @@ The conformance suite drives a headless browser through the real flows: sign-in,
 | The exchange client and the identity header, the choices of step 3.1 | [0016](decisions/0016-exchange-client-and-identity-header.md) |
 | The nginx adapter, the choices of step 3.2 | [0018](decisions/0018-nginx-adapter.md) |
 | Signing keys on AWS KMS, the choices of step 3.3 | [0019](decisions/0019-signing-keys-on-aws-kms.md) |
+| The conformance suite, the choices of step 3.4 (proposed) | [0020](decisions/0020-conformance-suite.md) |
 
 ## 16. Status and next steps
 
@@ -468,9 +471,9 @@ Planned, in order:
    1. **The exchange client and the identity header** (built, [0016](decisions/0016-exchange-client-and-identity-header.md)): the route modes `exchange` and `identity-header`, tested against Keycloak's standard token exchange and through Envoy. Needs nothing new from atoom.
    2. **The nginx adapter** (built, [0018](decisions/0018-nginx-adapter.md)): `auth_request` with the markers of [0011](decisions/0011-host-adapter-rules.md), the example config `examples/nginx/nginx.conf`, tested through nginx 1.30 as it is.
    3. **AWS KMS** (built, [0019](decisions/0019-signing-keys-on-aws-kms.md)): the `key/awskms` driver as a start-up setting for each of the client assertion and the identity header (`--key PURPOSE=awskms[:KEY]`), tested on an in-process KMS double and against Keycloak. Needs nothing newer from atoom: `key/awskms` 0.3.0. The real-AWS check is part of step 5.
-   4. **The conformance suite**: a headless browser through the real flows on every host, with the stand's scenarios.
+   4. **The conformance suite** (built, [0020](decisions/0020-conformance-suite.md), proposed): `conformance/`, `just test-conformance`, in CI. Chromium's headless shell, driven by chromedp, runs the same scenarios through Envoy over gRPC, Envoy over HTTP and nginx, each with its example as it is, against Keycloak, and asserts each host's documented answer where the hosts differ. API Gateway and the Lambda authorizer cannot run without AWS: their run of the scenarios is part of the real-AWS check of step 5.
 4. **First version** for the first sites.
-5. **Lambda:** the sign-in handler behind the Web Adapter and the authorizer as a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)), HTTP API first, then REST API.
+5. **Lambda:** the sign-in handler behind the Web Adapter and the authorizer as a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)), HTTP API first, then REST API. The real-AWS check runs the conformance scenarios through API Gateway ([0020](decisions/0020-conformance-suite.md)).
 6. **sluis v2 as an issuer** once PAR and `private_key_jwt` land there. Sites on sluis v1 wait for v2.
 7. **The session core moves into atoom** when sluis's sign-in actor adopts it.
 
