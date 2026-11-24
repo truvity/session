@@ -1,6 +1,6 @@
 # 0021. atoom's policy loader and seal block: the choices of the move to atoom 0.5.0
 
-Status: proposed
+Status: accepted, 2026-11-25 (owner decision on the pull request of the move to atoom 0.5.0)
 Date: 2026-11-24
 
 Carries out what [0006](0006-built-on-atoom.md) (sealing) and [0007](0007-policy.md) (the shared bundle, the loading rules, the loader) decided, now that atoom has built them: the `seal` block (atoom 0.4.0) and the Cedar loader `policy` (atoom 0.5.0, atoom record 0019). It ends the interim of [0019](0019-signing-keys-on-aws-kms.md), whose sealing "stays on the local sealer".
