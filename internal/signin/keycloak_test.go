@@ -10,15 +10,19 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 
 	"github.com/truvity/session/core"
 	"github.com/truvity/session/internal/atoomx"
+	"github.com/truvity/session/internal/exchange"
 	"github.com/truvity/session/internal/kctest"
 	"github.com/truvity/session/internal/localseal"
 	"github.com/truvity/session/internal/signin"
@@ -39,6 +43,13 @@ type stand struct {
 	mu       sync.Mutex
 	captured []string // logout tokens the issuer sent, kept by the test only
 	audit    *events
+	ahead    atomic.Int64 // how far the core's clock runs ahead of the wall clock, in nanoseconds
+}
+
+// standConfig is what a test may change in its stand: the API audiences of the realm and the route table.
+type standConfig struct {
+	audiences []string
+	routes    []core.Route
 }
 
 type events struct {
@@ -72,8 +83,12 @@ var realmSeq = struct {
 	n int
 }{}
 
-func newStand(t *testing.T) *stand {
+func newStand(t *testing.T, opts ...func(*standConfig)) *stand {
 	t.Helper()
+	cfg := standConfig{routes: []core.Route{{Prefix: "/", Mode: core.ModeSession}}}
+	for _, o := range opts {
+		o(&cfg)
+	}
 	kc := kctest.Need(t)
 	ctx := context.Background()
 	st := &stand{kc: kc, audit: &events{}}
@@ -133,16 +148,25 @@ func newStand(t *testing.T) *stand {
 		Realm: st.realm, ClientID: "session-docs",
 		RedirectURI: st.site.URL + core.PathCallback, PostLogoutURI: st.site.URL + "/",
 		BackChannelURL: st.back.URL + core.PathBackChannel, JWKS: string(jwks),
-		People: []kctest.Person{st.person},
+		People: []kctest.Person{st.person}, Audiences: cfg.audiences,
 	})
-	c, err := core.New(core.Options{Items: items, Seal: sealer, Audit: st.audit, Rules: core.Rules{
-		Site: "docs", Host: host, Routes: []core.Route{{Prefix: "/", Mode: core.ModeSession}}}})
+	identity := signin.Signer{Keys: keys.Keys, Purpose: signin.PurposeIdentityHeader, Typ: core.IdentityType}
+	if err := identity.Ensure(ctx); err != nil {
+		t.Fatal(err)
+	}
+	issuer, err := exchange.New(ctx, exchange.Options{Issuer: st.issuer, ClientID: "session-docs", Asserter: signer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := core.New(core.Options{Items: items, Seal: sealer, Audit: st.audit, Issuer: issuer, Identity: identity,
+		Now:   func() time.Time { return time.Now().Add(time.Duration(st.ahead.Load())) },
+		Rules: core.Rules{Site: "docs", Host: host, Routes: cfg.routes}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	st.core = c
 	st.handler, err = signin.New(ctx, signin.Options{Core: c, Issuer: st.issuer, ClientID: "session-docs",
-		Scopes: []string{"openid", "profile", "email"}, Signer: signer})
+		Scopes: []string{"openid", "profile", "email"}, Signer: signer, Identity: &identity})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,16 +482,149 @@ func TestASignInWithoutAuditIsRefused(t *testing.T) {
 	}
 }
 
-func TestJWKSPublishesTheClientKey(t *testing.T) {
+// The JWKS publishes the client key and the identity header's key, each with its own kid.
+func TestJWKSPublishesTheClientKeyAndTheIdentityKey(t *testing.T) {
 	st := newStand(t)
+	set := st.jwks(t)
+	if len(set.Keys) != 2 || set.Keys[0].KeyID == set.Keys[1].KeyID {
+		t.Fatalf("jwks %+v", set)
+	}
+	for _, k := range set.Keys {
+		if k.Algorithm != "ES256" || !k.IsPublic() || k.KeyID == "" || k.Use != "sig" {
+			t.Fatalf("key %+v", k)
+		}
+	}
+}
+
+func (st *stand) jwks(t *testing.T) jose.JSONWebKeySet {
+	t.Helper()
 	res, err := http.Get(st.back.URL + core.PathJWKS)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = res.Body.Close() }()
 	var set jose.JSONWebKeySet
-	_ = json.NewDecoder(res.Body).Decode(&set)
-	_ = res.Body.Close()
-	if len(set.Keys) != 1 || set.Keys[0].Algorithm != "ES256" || !set.Keys[0].IsPublic() || set.Keys[0].KeyID == "" {
-		t.Fatalf("jwks %+v", set)
+	if err := json.NewDecoder(res.Body).Decode(&set); err != nil {
+		t.Fatal(err)
+	}
+	return set
+}
+
+func exchangeRoutes(c *standConfig) {
+	c.audiences = []string{"billing"}
+	c.routes = []core.Route{
+		{Name: "billing", Prefix: "/api/billing/", Mode: core.ModeExchange, Audience: "billing"},
+		{Name: "nowhere", Prefix: "/api/nowhere/", Mode: core.ModeExchange, Audience: "no-such-client"},
+		{Name: "legacy", Prefix: "/legacy/", Mode: core.ModeIdentityHeader, Audience: "legacy-app"},
+		{Prefix: "/", Mode: core.ModeSession},
+	}
+}
+
+func (st *stand) check(t *testing.T, id, path string) core.Decision {
+	t.Helper()
+	return st.core.Check(context.Background(), core.Request{Method: "GET", Host: strings.TrimPrefix(st.site.URL, "https://"), Path: path,
+		Header: http.Header{"Cookie": {st.core.CookieName() + "=" + id}, "Accept": {"application/json"}}})
+}
+
+// The exchange against Keycloak's standard token exchange: the check gets a token whose audience is the route's API, signed
+// by the realm; an audience the realm does not have is refused with a 403 and the session stays; once the sign-in token is
+// old, it is refreshed first and the exchange takes the new one.
+func TestExchangeAndRefreshAgainstKeycloak(t *testing.T) {
+	st := newStand(t, exchangeRoutes)
+	b := st.browser(t)
+	st.signIn(t, b, "/")
+	id := st.sessionCookie(b)
+	ctx := context.Background()
+
+	d := st.check(t, id, "/api/billing/x")
+	tok, ok := strings.CutPrefix(d.Set["authorization"], "Bearer ")
+	if d.Outcome != core.Allow || !ok {
+		t.Fatalf("exchange: %+v %s", d, d.Body)
+	}
+	p, err := oidc.NewProvider(ctx, st.issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at, err := p.VerifierContext(ctx, &oidc.Config{ClientID: "billing"}).Verify(ctx, tok)
+	if err != nil {
+		t.Fatalf("the exchanged token: %v", err)
+	}
+	s, err := st.core.Load(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at.Subject != s.Subject || tok == s.AccessToken {
+		t.Fatalf("subject %q, the sign-in token itself %v", at.Subject, tok == s.AccessToken)
+	}
+	if again := st.check(t, id, "/api/billing/y"); again.Set["authorization"] != d.Set["authorization"] {
+		t.Fatal("the second check did not take the cached token")
+	}
+
+	d = st.check(t, id, "/api/nowhere/x")
+	if d.Status != http.StatusForbidden || d.Reason != "exchange_refused" {
+		t.Fatalf("unknown audience: %d %q %s", d.Status, d.Reason, d.Body)
+	}
+	if _, err := st.core.Load(ctx, id); err != nil {
+		t.Fatal("a refused exchange ended the session")
+	}
+
+	// Keycloak's access tokens live five minutes: six minutes on, the sign-in token is old and the cached token has ended.
+	st.ahead.Store(int64(6 * time.Minute))
+	d = st.check(t, id, "/api/billing/z")
+	if d.Outcome != core.Allow || d.Set["authorization"] == "" {
+		t.Fatalf("after the refresh: %+v %s", d, d.Body)
+	}
+	fresh, err := st.core.Load(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.AccessToken == s.AccessToken || fresh.AccessExpiry <= s.AccessExpiry {
+		t.Fatal("the sign-in token was not refreshed")
+	}
+	kinds := st.audit.kinds()
+	if !slices.Contains(kinds, "token-exchange:") || !slices.Contains(kinds, "token-exchange:invalid_client") && !slices.Contains(kinds, "token-exchange:invalid_request") && !slices.Contains(kinds, "token-exchange:invalid_target") {
+		t.Fatalf("events %v", kinds)
+	}
+}
+
+// The identity header is a JWS of typ session-identity+jwt that verifies with a key of /_session/jwks, with the person's
+// claims and a life of a minute.
+func TestTheIdentityHeaderVerifiesWithTheJWKS(t *testing.T) {
+	st := newStand(t, exchangeRoutes)
+	b := st.browser(t)
+	st.signIn(t, b, "/")
+	d := st.check(t, st.sessionCookie(b), "/legacy/x")
+	h := d.Set[core.IdentityHeader]
+	if d.Outcome != core.Allow || h == "" {
+		t.Fatalf("decision %+v", d)
+	}
+	sig, err := jose.ParseSignedCompact(h, []jose.SignatureAlgorithm{jose.ES256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdr := sig.Signatures[0].Protected
+	if hdr.ExtraHeaders["typ"] != core.IdentityType {
+		t.Fatalf("typ %v", hdr.ExtraHeaders["typ"])
+	}
+	set := st.jwks(t)
+	keys := set.Key(hdr.KeyID)
+	if len(keys) != 1 {
+		t.Fatalf("the kid %q is not in the JWKS", hdr.KeyID)
+	}
+	payload, err := sig.Verify(keys[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Iss, Aud, Sub, Email string
+		Groups               []string
+		Iat, Exp             int64
+	}
+	if err := json.Unmarshal(payload, &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Iss != st.core.Origin() || c.Aud != "legacy-app" || c.Sub == "" || c.Email != st.person.Email ||
+		!slices.Equal(c.Groups, []string{"admins"}) || c.Exp-c.Iat != 60 {
+		t.Fatalf("claims %+v", c)
 	}
 }

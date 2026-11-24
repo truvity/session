@@ -7,7 +7,8 @@
 # - the sign-in prefix /_session/ goes to session without a check (ExtAuthzPerRoute disabled);
 # - the check sees only headers, never the body, and only the ones it needs (allowed_headers);
 # - fail closed: failure_mode_allow false, and 503 when the check cannot be reached; the timeout is longer than session's
-#   store timeout (1.5 s), so session's own 503 is the one the client sees.
+#   store timeout (1.5 s) plus its exchange timeout (2 s), so session's own 503 is the one the client sees, also on a route
+#   of mode exchange whose issuer is slow.
 admin:
   address: { socket_address: { address: 127.0.0.1, port_value: ${ADMIN_PORT} } }
 static_resources:
@@ -54,7 +55,7 @@ static_resources:
                 - { exact: x-requested-with }
               grpc_service:
                 envoy_grpc: { cluster_name: session_check_grpc }
-                timeout: 2s
+                timeout: 4s
           - name: envoy.filters.http.router
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -99,7 +100,7 @@ static_resources:
                 - { exact: origin }
                 - { exact: x-requested-with }
               http_service:
-                server_uri: { uri: "http://session-check", cluster: session_check_http, timeout: 2s }
+                server_uri: { uri: "http://session-check", cluster: session_check_http, timeout: 4s }
                 path_prefix: /check
                 authorization_response:
                   # The headers an allow answer sets on the upstream request; x-envoy-auth-headers-to-remove names the ones

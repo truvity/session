@@ -25,7 +25,10 @@ type File struct {
 	Scopes  []string `yaml:"scopes"`
 	Session Session  `yaml:"session"`
 	Policy  *Policy  `yaml:"policy"`
-	Routes  []Route  `yaml:"routes"`
+	// ErrorPage names a document of the source port: the HTML page a navigation gets when the issuer refuses the exchange of
+	// its route. Empty is the built-in page.
+	ErrorPage string  `yaml:"error_page"`
+	Routes    []Route `yaml:"routes"`
 }
 
 // Client is the site's client at the issuer. Its key is the key port's purpose client-assertion; which key driver holds it is a
@@ -52,7 +55,8 @@ type Route struct {
 	Match           Match  `yaml:"match"`
 	Mode            string `yaml:"mode"`
 	Unauthenticated string `yaml:"unauthenticated"`
-	Audience        string `yaml:"audience"`
+	// Audience is the API audience of mode exchange, and the aud of the identity header of mode identity-header.
+	Audience string `yaml:"audience"`
 }
 
 // Match is a route's path match: one of prefix and exact.
@@ -114,6 +118,9 @@ func (f *File) Rules() (core.Rules, error) {
 	}
 	if f.Policy != nil && f.Policy.Bundle == "" {
 		errs = append(errs, errors.New("policy.bundle: the name of the bundle document"))
+	}
+	if f.ErrorPage != "" && (f.ErrorPage == "site" || (f.Policy != nil && f.ErrorPage == f.Policy.Bundle)) {
+		errs = append(errs, fmt.Errorf("error_page %q: a document of its own", f.ErrorPage))
 	}
 	r := core.Rules{Site: f.Site, Host: f.Host, Idle: idle, Max: maxLife}
 	for _, rt := range f.Routes {

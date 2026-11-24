@@ -17,6 +17,10 @@ type Options struct {
 	Seal Sealer
 	// Policy decides who may reach a route; nil lets the route table decide alone.
 	Policy Policy
+	// Issuer is the client of the issuer's token endpoint, for the route mode exchange. Required when a route uses it.
+	Issuer Issuer
+	// Identity signs the identity header, for the route mode identity-header. Required when a route uses it.
+	Identity Signer
 	// Audit takes the security-audit events; nil drops them.
 	Audit Auditor
 	// Metrics counts checks; nil makes new counters.
@@ -27,13 +31,15 @@ type Options struct {
 
 // Core is the session block of one site.
 type Core struct {
-	rules   Rules
-	items   storev1alpha1connect.ItemServiceClient
-	seal    Sealer
-	policy  Policy
-	audit   Auditor
-	metrics *Metrics
-	now     func() time.Time
+	rules    Rules
+	items    storev1alpha1connect.ItemServiceClient
+	seal     Sealer
+	policy   Policy
+	issuer   Issuer
+	identity *identityCache
+	audit    Auditor
+	metrics  *Metrics
+	now      func() time.Time
 }
 
 // New checks the rules and returns the block.
@@ -45,7 +51,17 @@ func New(o Options) (*Core, error) {
 	if err := o.Rules.Validate(); err != nil {
 		return nil, err
 	}
-	c := &Core{rules: o.Rules, items: o.Items, seal: o.Seal, policy: o.Policy, audit: o.Audit, metrics: o.Metrics, now: o.Now}
+	needIssuer, needIdentity := o.Rules.needs()
+	if needIssuer && o.Issuer == nil {
+		return nil, errors.New("session core: a route of mode exchange needs the issuer client")
+	}
+	if needIdentity && o.Identity == nil {
+		return nil, errors.New("session core: a route of mode identity-header needs the identity signer")
+	}
+	c := &Core{rules: o.Rules, items: o.Items, seal: o.Seal, policy: o.Policy, issuer: o.Issuer, audit: o.Audit, metrics: o.Metrics, now: o.Now}
+	if o.Identity != nil {
+		c.identity = newIdentityCache(o.Identity)
+	}
 	if c.audit == nil {
 		c.audit = discardAuditor{}
 	}

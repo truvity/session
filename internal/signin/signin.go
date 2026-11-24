@@ -34,6 +34,9 @@ type Options struct {
 	ClientID string
 	Scopes   []string
 	Signer   Signer
+	// Identity is the signer of the identity header, whose public key /_session/jwks publishes too; nil publishes the client
+	// key alone.
+	Identity *Signer
 	// HTTP is the client for the issuer's endpoints; nil is a client with a 10 s timeout.
 	HTTP *http.Client
 	// Log is the operational log; nil is slog.Default().
@@ -456,14 +459,23 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		"groups": groups, "expires_at": ends.UTC().Format(time.RFC3339)})
 }
 
-// JWKS publishes the service's public keys: today the key of the client assertion.
+// JWKS publishes the service's public keys: the key of the client assertion, which the issuer reads, and the key of the
+// identity header, which apps read. Each has its own kid; an app tells its key by the kid of the header it verifies.
 func (h *Handler) JWKS(w http.ResponseWriter, r *http.Request) {
-	k, err := h.o.Signer.JWK(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "unavailable"})
-		return
+	signers := []Signer{h.o.Signer}
+	if h.o.Identity != nil {
+		signers = append(signers, *h.o.Identity)
+	}
+	var set jose.JSONWebKeySet
+	for _, s := range signers {
+		k, err := s.JWK(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "unavailable"})
+			return
+		}
+		set.Keys = append(set.Keys, k)
 	}
 	w.Header().Set("Cache-Control", "max-age=300")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{k}})
+	_ = json.NewEncoder(w).Encode(set)
 }

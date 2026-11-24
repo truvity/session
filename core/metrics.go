@@ -15,6 +15,8 @@ type Metrics struct {
 	checks       map[string]*atomic.Int64 // by outcome and reason, "allow", "deny/login_required", "unavailable/store", ...
 	auditDropped atomic.Int64
 	touchFailed  atomic.Int64
+	// cacheWriteFailed counts tokens that were exchanged but could not be cached: the check used them, the next one exchanges again.
+	cacheWriteFailed atomic.Int64
 }
 
 // NewMetrics returns zeroed counters.
@@ -73,7 +75,8 @@ func (m *Metrics) WritePrometheus(w io.Writer, site string) error {
 		}
 	}
 	_, err := fmt.Fprintf(w, "# TYPE session_audit_dropped_total counter\nsession_audit_dropped_total{site=%q} %d\n"+
-		"# TYPE session_idle_refresh_failed_total counter\nsession_idle_refresh_failed_total{site=%q} %d\n",
-		site, m.auditDropped.Load(), site, m.touchFailed.Load())
+		"# TYPE session_idle_refresh_failed_total counter\nsession_idle_refresh_failed_total{site=%q} %d\n"+
+		"# TYPE session_exchange_cache_write_failed_total counter\nsession_exchange_cache_write_failed_total{site=%q} %d\n",
+		site, m.auditDropped.Load(), site, m.touchFailed.Load(), site, m.cacheWriteFailed.Load())
 	return err
 }

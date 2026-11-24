@@ -13,12 +13,22 @@ session:
   max: 8h
 policy:
   bundle: policy-bundle        # the document policy-bundle.jws next to site.jws: Cedar text (docs/policy.md)
+# error_page: error-page       # optional: the page (error-page.jws, HTML) a navigation gets when an exchange is refused
 routes:
   - match: { prefix: /assets/ }
     mode: public
   - name: admin
     match: { prefix: /admin/ }
     mode: session
+  - name: billing              # Authorization: Bearer with a token whose audience is billing (RFC 8693 token exchange)
+    match: { prefix: /api/billing/ }
+    mode: exchange
+    audience: billing
+    unauthenticated: "401"
+  - name: reports              # X-Session-Identity: the person's identity, signed by session's key (/_session/jwks)
+    match: { prefix: /reports/ }
+    mode: identity-header
+    audience: reports
   - match: { prefix: /api/ }
     mode: session
     unauthenticated: "401"

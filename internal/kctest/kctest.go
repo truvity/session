@@ -100,6 +100,9 @@ type RealmSpec struct {
 	BackChannelURL string // empty: no back-channel logout
 	JWKS           string // the client's public keys, as a JWKS document
 	People         []Person
+	// Audiences are API clients that the client may exchange its access token for (Keycloak's standard token exchange): each
+	// is made as a client with no flow of its own, and the client's access tokens carry it and the client itself in aud.
+	Audiences []string
 }
 
 // Realm makes a realm with one confidential client that authenticates with private_key_jwt (ES256, the key given inline as
@@ -141,20 +144,34 @@ func (k *Keycloak) Realm(t *testing.T, s RealmSpec) string {
 	if s.BackChannelURL != "" {
 		attrs["backchannel.logout.url"] = s.BackChannelURL
 	}
-	realm := map[string]any{
-		"realm": s.Realm, "enabled": true, "users": users, "groups": groupList,
-		"clients": []map[string]any{{
-			"clientId": s.ClientID, "protocol": "openid-connect", "enabled": true, "publicClient": false,
-			"clientAuthenticatorType": "client-jwt", "standardFlowEnabled": true, "directAccessGrantsEnabled": false,
-			"redirectUris": []string{s.RedirectURI}, "webOrigins": []string{}, "frontchannelLogout": false,
-			"attributes": attrs,
-			"protocolMappers": []map[string]any{{
-				"name": "groups", "protocol": "openid-connect", "protocolMapper": "oidc-group-membership-mapper",
-				"config": map[string]string{"claim.name": "groups", "full.path": "false", "id.token.claim": "true",
-					"access.token.claim": "true", "userinfo.token.claim": "true"},
-			}},
-		}},
+	mappers := []map[string]any{{
+		"name": "groups", "protocol": "openid-connect", "protocolMapper": "oidc-group-membership-mapper",
+		"config": map[string]string{"claim.name": "groups", "full.path": "false", "id.token.claim": "true",
+			"access.token.claim": "true", "userinfo.token.claim": "true"},
+	}}
+	clients := []map[string]any{}
+	if len(s.Audiences) > 0 {
+		// Keycloak's standard token exchange (V2): the requesting client is in the subject token's aud, and a requested
+		// audience is one the client's tokens may carry.
+		attrs["standard.token.exchange.enabled"] = "true"
+		for _, aud := range append([]string{s.ClientID}, s.Audiences...) {
+			mappers = append(mappers, map[string]any{
+				"name": "audience " + aud, "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+				"config": map[string]string{"included.client.audience": aud, "access.token.claim": "true", "id.token.claim": "false"},
+			})
+		}
+		for _, aud := range s.Audiences {
+			clients = append(clients, map[string]any{"clientId": aud, "protocol": "openid-connect", "enabled": true,
+				"publicClient": false, "standardFlowEnabled": false, "directAccessGrantsEnabled": false})
+		}
 	}
+	clients = append([]map[string]any{{
+		"clientId": s.ClientID, "protocol": "openid-connect", "enabled": true, "publicClient": false,
+		"clientAuthenticatorType": "client-jwt", "standardFlowEnabled": true, "directAccessGrantsEnabled": false,
+		"redirectUris": []string{s.RedirectURI}, "webOrigins": []string{}, "frontchannelLogout": false,
+		"attributes": attrs, "protocolMappers": mappers,
+	}}, clients...)
+	realm := map[string]any{"realm": s.Realm, "enabled": true, "users": users, "groups": groupList, "clients": clients}
 	status, body, err := k.Admin(ctx, http.MethodPost, "/realms", realm)
 	if err != nil || status != http.StatusCreated {
 		t.Fatalf("make realm %s: status %d %v %s", s.Realm, status, err, body)

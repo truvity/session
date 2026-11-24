@@ -1,5 +1,5 @@
 // Command session is the session service: the sign-in paths and the check, for Envoy over gRPC (--check-grpc) and HTTP
-// (--check-http).
+// (--check-http), with the exchange client and the identity header for the route modes exchange and identity-header.
 //
 //	session serve --config-dir DIR --key-dir DIR --seal-root FILE --dynamodb-table NAME [flags]
 //	session check --site FILE      validate a site file
@@ -35,6 +35,7 @@ import (
 	"github.com/truvity/session/internal/atoomx"
 	"github.com/truvity/session/internal/audit"
 	"github.com/truvity/session/internal/envoy"
+	"github.com/truvity/session/internal/exchange"
 	"github.com/truvity/session/internal/localseal"
 	"github.com/truvity/session/internal/policy"
 	"github.com/truvity/session/internal/signin"
@@ -107,7 +108,7 @@ type serveFlags struct {
 	table, endpoint                          string
 	listen, admin                            string
 	checkGRPC, checkHTTP                     string
-	storeTimeout                             time.Duration
+	storeTimeout, exchangeTimeout            time.Duration
 }
 
 func serve(args []string) error {
@@ -124,6 +125,8 @@ func serve(args []string) error {
 	fs.StringVar(&f.checkHTTP, "check-http", "", "the address of Envoy's HTTP external authorisation (path prefix /check); empty turns it off")
 	fs.StringVar(&f.admin, "admin", "127.0.0.1:9090", "the address of /metrics and /healthz")
 	fs.DurationVar(&f.storeTimeout, "store-timeout", core.DefaultStoreTimeout, "the timeout of every store call; shorter than the proxy's timeout for the check")
+	fs.DurationVar(&f.exchangeTimeout, "exchange-timeout", core.DefaultExchangeTimeout,
+		"the bound of a check's token exchange (lock, refresh, issuer call); store timeout plus this is shorter than the proxy's timeout for the check")
 	_ = fs.Parse(args)
 	for name, v := range map[string]string{"config-dir": f.configDir, "key-dir": f.keyDir, "seal-root": f.sealRoot, "dynamodb-table": f.table} {
 		if v == "" {
@@ -178,6 +181,14 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 		return nil, err
 	}
 	rules.StoreTimeout = f.storeTimeout
+	rules.ExchangeTimeout = f.exchangeTimeout
+	if sf.ErrorPage != "" {
+		page, err := src.Source.Read(ctx, connect.NewRequest(&sourcev1.ReadRequest{Name: sf.ErrorPage}))
+		if err != nil {
+			return nil, fmt.Errorf("error page: %w", err)
+		}
+		rules.ErrorPage = page.Msg.GetData()
+	}
 	var pol core.Policy
 	if sf.Policy != nil {
 		eng, err := policy.Start(ctx, policy.SourceLoader{Source: src.Source, Name: sf.Policy.Bundle})
@@ -217,12 +228,22 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	if err := signer.Ensure(ctx); err != nil {
 		return nil, fmt.Errorf("client key: %w", err)
 	}
-	c, err := core.New(core.Options{Rules: rules, Items: st.Items, Seal: sealer, Policy: pol, Audit: audit.NewLines(os.Stdout)})
+	identity := signin.Signer{Keys: keys.Keys, Purpose: signin.PurposeIdentityHeader, Typ: core.IdentityType}
+	if err := identity.Ensure(ctx); err != nil {
+		return nil, fmt.Errorf("identity header key: %w", err)
+	}
+	issuer, err := exchange.New(ctx, exchange.Options{Issuer: sf.Issuer, ClientID: sf.Client.ID, Asserter: signer})
+	if err != nil {
+		return nil, err
+	}
+	c, err := core.New(core.Options{Rules: rules, Items: st.Items, Seal: sealer, Policy: pol, Issuer: issuer, Identity: identity,
+		Audit: audit.NewLines(os.Stdout)})
 	if err != nil {
 		return nil, err
 	}
 	a.core = c
-	h, err := signin.New(ctx, signin.Options{Core: c, Issuer: sf.Issuer, ClientID: sf.Client.ID, Scopes: sf.Scopes, Signer: signer})
+	h, err := signin.New(ctx, signin.Options{Core: c, Issuer: sf.Issuer, ClientID: sf.Client.ID, Scopes: sf.Scopes, Signer: signer,
+		Identity: &identity})
 	if err != nil {
 		return nil, err
 	}
