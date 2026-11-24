@@ -1,6 +1,6 @@
 # 0016. The exchange client and the identity header: the choices of step 3.1
 
-Status: proposed (the owner accepts it with the pull request that builds it)
+Status: accepted, 2026-11-24 (owner decision on the pull request of step 3.1)
 Date: 2026-11-24
 
 Builds what [0005](0005-tokens-per-api-and-issuers.md) decides for the route modes `exchange` and `identity-header`, and ends the refusal of those modes at start that [0015](0015-envoy-http-mode-csrf-header-and-step-2-choices.md) set "until step 3".
