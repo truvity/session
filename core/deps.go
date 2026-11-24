@@ -21,12 +21,50 @@ const (
 	PurposeSessionRecord = "session-record" // Seal and Open of a session record
 	PurposeSignInRecord  = "signin-record"  // Seal and Open of a sign-in transaction
 	PurposeSessionKey    = "session-key"    // Mac of a cookie id into the store key of its session
-	PurposeLookupKey     = "lookup-key"     // Mac of a sid, a subject, a state or a claimed name into a store key
+	PurposeLookupKey     = "lookup-key"     // Mac of a sid, a subject, a state, a claimed name or an audience into a store key
+	PurposeExchanged     = "exchanged"      // Seal and Open of a cached token for one API audience
 )
 
 // Purposes lists every purpose the core uses, for a Sealer that wants them declared.
 func Purposes() []string {
-	return []string{PurposeSessionRecord, PurposeSignInRecord, PurposeSessionKey, PurposeLookupKey}
+	return []string{PurposeSessionRecord, PurposeSignInRecord, PurposeSessionKey, PurposeLookupKey, PurposeExchanged}
+}
+
+// Issuer is the client of the issuer's token endpoint that the check needs for the route mode exchange (decision 0005): the
+// token exchange of RFC 8693, and the refresh of the sign-in token. internal/exchange is the implementation. An answer of the
+// issuer that refuses the request is a *RefusedError; any other error is an outage, and the check answers it with 503.
+type Issuer interface {
+	// Exchange trades the session's access token for a token of the audience.
+	Exchange(ctx context.Context, subjectToken, audience string) (Token, error)
+	// Refresh trades the refresh token for new sign-in tokens.
+	Refresh(ctx context.Context, refreshToken string) (Refreshed, error)
+}
+
+// Token is an access token and how long it lives from the moment it was issued (0 when the issuer did not say).
+type Token struct {
+	AccessToken string
+	ExpiresIn   time.Duration
+}
+
+// Refreshed is the answer to a refresh. An empty RefreshToken or IDToken means the issuer kept the old one.
+type Refreshed struct {
+	Token
+	RefreshToken string
+	IDToken      string
+}
+
+// RefusedError is an issuer's refusal: an OAuth error answer of its token endpoint (RFC 6749 section 5.2, RFC 8693 section
+// 2.2.2). Code is the OAuth error code, never the issuer's description.
+type RefusedError struct {
+	Code string
+}
+
+func (e *RefusedError) Error() string { return "the issuer refused: " + e.Code }
+
+// Signer signs the claims of a signed identity header as a compact JWS, with a key of the key port (decision 0005). The key
+// is the service's own, published at /_session/jwks. internal/signin.Signer is the implementation.
+type Signer interface {
+	Sign(ctx context.Context, claims map[string]any) (string, error)
 }
 
 // Policy decides whether a person may reach a route (decision 0007). It runs in-process on every check of a route that needs
@@ -61,6 +99,7 @@ type Event struct {
 	Subject      string // empty when no session is known
 	Issuer       string
 	Route        string
+	Audience     string // the API audience of a token exchange
 	Reason       string // a short machine word
 	PolicyDigest string // the digest of the policy set that decided, on a policy denial
 }
@@ -75,6 +114,8 @@ const (
 	EventLogout            EventKind = "logout"
 	EventBackChannelLogout EventKind = "back-channel-logout"
 	EventDenied            EventKind = "denied"
+	EventExchange          EventKind = "token-exchange" // Reason empty when a token was issued, else why not
+	EventRefreshFailed     EventKind = "refresh-failed" // the sign-in token could not be refreshed; the session ended
 )
 
 // Auditor takes security-audit events. A check never waits on it for a decision: the core emits and goes on, and counts an

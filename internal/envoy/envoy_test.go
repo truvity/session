@@ -41,16 +41,35 @@ func newSite(t *testing.T) *site {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := core.New(core.Options{Items: items, Seal: sealer, Rules: core.Rules{
+	c, err := core.New(core.Options{Items: items, Seal: sealer, Issuer: issuer{}, Identity: signer{}, Rules: core.Rules{
 		Site: "docs", Host: "docs.example.test", StoreTimeout: 300 * time.Millisecond,
 		Routes: []core.Route{
 			{Prefix: "/assets/", Mode: core.ModePublic},
+			{Prefix: "/api/billing/", Mode: core.ModeExchange, Audience: "billing"},
+			{Prefix: "/legacy/", Mode: core.ModeIdentityHeader},
 			{Prefix: "/", Mode: core.ModeSession},
 		}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &site{core: c, mem: mem}
+}
+
+// issuer and signer stand in for the issuer's token endpoint and the key port: the adapters only carry what the core decides.
+type issuer struct{}
+
+func (issuer) Exchange(_ context.Context, _, audience string) (core.Token, error) {
+	return core.Token{AccessToken: "token-for-" + audience, ExpiresIn: time.Minute}, nil
+}
+
+func (issuer) Refresh(context.Context, string) (core.Refreshed, error) {
+	return core.Refreshed{}, &core.RefusedError{Code: "invalid_grant"}
+}
+
+type signer struct{}
+
+func (signer) Sign(_ context.Context, claims map[string]any) (string, error) {
+	return "signed-identity-of-" + fmt.Sprint(claims["sub"]), nil
 }
 
 func (s *site) signIn(t *testing.T) string {
@@ -109,6 +128,13 @@ func TestGRPCAdapter(t *testing.T) {
 		t.Fatalf("401: %v", res)
 	}
 
+	// An exchange route: the token is set over a browser-sent Authorization and is not also removed.
+	res, _ = g.Check(ctx, checkRequest("GET", "/api/billing/x", map[string]string{"cookie": s.core.CookieName() + "=" + id, "authorization": "Bearer forged"}))
+	ok = res.GetOkResponse()
+	if v, _ := headerValue(ok.GetHeaders(), "authorization"); v != "Bearer token-for-billing" || slices.Contains(ok.GetHeadersToRemove(), "authorization") {
+		t.Fatalf("exchange: %v", res)
+	}
+
 	s.mem.Down.Store(true)
 	res, _ = g.Check(ctx, checkRequest("GET", "/app", map[string]string{"cookie": s.core.CookieName() + "=" + id}))
 	if res.GetStatus().GetCode() != int32(codes.Unavailable) || res.GetDeniedResponse().GetStatus().GetCode() != 503 {
@@ -140,6 +166,10 @@ func TestHTTPAdapter(t *testing.T) {
 	res = do("GET", "/app", "Cookie", "a=1; "+s.core.CookieName()+"="+id)
 	if res.Header.Get("Cookie") != "a=1" || strings.Contains(res.Header.Get(envoy.HeadersToRemove), "cookie") {
 		t.Fatalf("allow with a cookie: %v", res.Header)
+	}
+	res = do("GET", "/legacy/x", "Cookie", s.core.CookieName()+"="+id)
+	if res.Header.Get(core.IdentityHeader) != "signed-identity-of-alice" || strings.Contains(res.Header.Get(envoy.HeadersToRemove), core.IdentityHeader) {
+		t.Fatalf("identity header: %v", res.Header)
 	}
 	res = do("GET", "/app", "Sec-Fetch-Mode", "navigate", "Accept", "text/html")
 	if res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/_session/login?return_to=%2Fapp" {
@@ -311,6 +341,24 @@ func TestThroughEnvoy(t *testing.T) {
 			}
 			if c := got.Headers["Cookie"]; len(c) != 1 || c[0] != "theme=dark" {
 				t.Fatalf("the site got Cookie %q", c)
+			}
+			// An exchange route: the site gets the token of its audience, once, never the browser's Authorization; and no
+			// identity header. An identity-header route: the signed identity, and no Authorization.
+			_, b = call(t, "GET", base+"/api/billing/x", "Cookie", ck, "Authorization", "Bearer forged", "X-Session-Identity", "forged")
+			got = siteSaw(t, b)
+			if a := got.Headers["Authorization"]; len(a) != 1 || a[0] != "Bearer token-for-billing" {
+				t.Fatalf("the exchange route's site got Authorization %q", a)
+			}
+			if v, ok := got.Headers["X-Session-Identity"]; ok {
+				t.Fatalf("the exchange route's site got X-Session-Identity %q", v)
+			}
+			_, b = call(t, "GET", base+"/legacy/x", "Cookie", ck, "Authorization", "Bearer forged", "X-Session-Identity", "forged")
+			got = siteSaw(t, b)
+			if v := got.Headers["X-Session-Identity"]; len(v) != 1 || v[0] != "signed-identity-of-alice" {
+				t.Fatalf("the identity route's site got X-Session-Identity %q", v)
+			}
+			if v, ok := got.Headers["Authorization"]; ok {
+				t.Fatalf("the identity route's site got Authorization %q", v)
 			}
 			// Only the session cookie: the site gets no Cookie header at all.
 			_, b = call(t, "GET", base+"/app/x", "Cookie", ck)

@@ -5,6 +5,8 @@
 # - The sign-in prefix /_session/ is its own HTTPRoute with no SecurityPolicy: it runs before a session exists.
 # - Every other path is an HTTPRoute with the SecurityPolicy: the check sees only the headers it needs, and fails closed.
 # - The ClientTrafficPolicy makes the path the check sees the path the router uses.
+# - The check's timeout must be longer than session's store timeout plus its exchange timeout (1.5 s + 2 s) on a site with
+#   routes of mode exchange, as in examples/envoy/envoy.yaml (4 s); see what the Envoy Gateway version offers for it.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:

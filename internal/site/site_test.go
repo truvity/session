@@ -50,18 +50,20 @@ func TestAGoodSiteFile(t *testing.T) {
 
 func TestBadSiteFiles(t *testing.T) {
 	cases := map[string]string{
-		"unknown key":        strings.Replace(good, "scopes:", "extra: 1\nscopes:", 1),
-		"duplicate key":      strings.Replace(good, "site: docs", "site: docs\nsite: other", 1),
-		"two documents":      good + "\n---\nsite: other\n",
-		"plain issuer":       strings.Replace(good, "https://issuer", "http://issuer", 1),
-		"client secret":      strings.Replace(good, "private_key_jwt", "client_secret_basic", 1),
-		"no openid":          strings.Replace(good, "[openid, profile, email]", "[profile]", 1),
-		"bad duration":       strings.Replace(good, "idle: 20m", "idle: soon", 1),
-		"idle above max":     strings.Replace(good, "idle: 20m", "idle: 5h", 1),
-		"exchange not built": strings.Replace(good, "mode: public", "mode: exchange\n    audience: https://api.example.test", 1),
-		"bad site name":      strings.Replace(good, "site: docs", "site: Docs_1", 1),
-		"own prefix":         strings.Replace(good, "prefix: /assets/", "prefix: /_session/x", 1),
-		"empty bundle":       strings.Replace(good, "bundle: policy-bundle", "bundle: \"\"", 1),
+		"unknown key":            strings.Replace(good, "scopes:", "extra: 1\nscopes:", 1),
+		"duplicate key":          strings.Replace(good, "site: docs", "site: docs\nsite: other", 1),
+		"two documents":          good + "\n---\nsite: other\n",
+		"plain issuer":           strings.Replace(good, "https://issuer", "http://issuer", 1),
+		"client secret":          strings.Replace(good, "private_key_jwt", "client_secret_basic", 1),
+		"no openid":              strings.Replace(good, "[openid, profile, email]", "[profile]", 1),
+		"bad duration":           strings.Replace(good, "idle: 20m", "idle: soon", 1),
+		"idle above max":         strings.Replace(good, "idle: 20m", "idle: 5h", 1),
+		"exchange, no audience":  strings.Replace(good, "mode: public", "mode: exchange", 1),
+		"session with audience":  strings.Replace(good, "mode: public", "mode: session\n    audience: https://api.example.test", 1),
+		"error page is the site": strings.Replace(good, "routes:", "error_page: site\nroutes:", 1),
+		"bad site name":          strings.Replace(good, "site: docs", "site: Docs_1", 1),
+		"own prefix":             strings.Replace(good, "prefix: /assets/", "prefix: /_session/x", 1),
+		"empty bundle":           strings.Replace(good, "bundle: policy-bundle", "bundle: \"\"", 1),
 	}
 	for name, text := range cases {
 		if _, err := site.Parse([]byte(text)); err == nil {

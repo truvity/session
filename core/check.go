@@ -37,7 +37,7 @@ var OwnedHeaders = []string{"authorization", "x-session-token", "x-session-ident
 type Decision struct {
 	Outcome     Outcome
 	Status      int
-	Reason      string // a short machine word: login_required, csrf, forbidden, no_route, bad_path, store, policy
+	Reason      string // a short machine word: login_required, csrf, forbidden, no_route, bad_path, store, policy, exchange_refused, exchange, identity
 	Location    string
 	ContentType string
 	Body        []byte
@@ -120,6 +120,28 @@ func (c *Core) deny(status int, reason string, body any) Decision {
 	return Decision{Outcome: Deny, Status: status, Reason: reason, ContentType: "application/json", Body: jsonBody(body)}
 }
 
+func unavailable(reason string) Decision {
+	return Decision{Outcome: Unavailable, Status: http.StatusServiceUnavailable, Reason: reason,
+		ContentType: "application/json", Body: jsonBody(map[string]string{"error": "unavailable"})}
+}
+
+// defaultErrorPage is the page a navigation gets when the issuer refuses the exchange of its route and the site file names
+// no page of its own.
+const defaultErrorPage = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Access refused</title></head>
+<body><h1>Access refused</h1><p>You are signed in, but this part of the site is not available to you.</p></body></html>
+`
+
+// exchangeRefused is the answer when the issuer refuses the exchange for a route (decision 0005): the site's error page to a
+// navigation, a JSON 403 to anything else. The session stays.
+func (c *Core) exchangeRefused(r Request) Decision {
+	if IsNavigation(r) {
+		return Decision{Outcome: Deny, Status: http.StatusForbidden, Reason: "exchange_refused",
+			ContentType: "text/html; charset=utf-8", Body: c.rules.ErrorPage}
+	}
+	return c.deny(http.StatusForbidden, "exchange_refused", map[string]string{"error": "exchange_refused"})
+}
+
 // Check is the whole decision for one request. It fails closed: a store failure is 503, never allow.
 func (c *Core) Check(ctx context.Context, r Request) Decision {
 	d := c.check(ctx, r)
@@ -137,8 +159,18 @@ func (c *Core) check(ctx context.Context, r Request) Decision {
 		return c.deny(http.StatusBadRequest, "bad_path", map[string]string{"error": "bad_path"})
 	}
 	id, otherCookies := c.SplitCookies(r.Header)
-	allow := func(s *Session) Decision {
-		d := Decision{Outcome: Allow, Set: map[string]string{}, Remove: append([]string(nil), OwnedHeaders...)}
+	// allow is the allow answer: the owned headers are removed, except those the route sets, which overwrite a browser-sent
+	// value; Cookie keeps only the cookies that are not session's. A header is never both set and removed.
+	allow := func(s *Session, set map[string]string) Decision {
+		d := Decision{Outcome: Allow, Set: map[string]string{}}
+		for k, v := range set {
+			d.Set[k] = v
+		}
+		for _, h := range OwnedHeaders {
+			if _, ok := d.Set[h]; !ok {
+				d.Remove = append(d.Remove, h)
+			}
+		}
 		if otherCookies != "" {
 			d.Set["cookie"] = otherCookies
 		} else {
@@ -152,14 +184,14 @@ func (c *Core) check(ctx context.Context, r Request) Decision {
 	// The sign-in paths run before a session exists. They are routed to the service without a check; a check that arrives
 	// for one anyway passes, with the owned headers stripped.
 	if strings.HasPrefix(path, Prefix) {
-		return allow(nil)
+		return allow(nil, nil)
 	}
 	route, ok := c.rules.match(path)
 	if !ok {
 		return c.deny(http.StatusNotFound, "no_route", map[string]string{"error": "no_route"})
 	}
 	if !route.needsSession() {
-		return allow(nil)
+		return allow(nil, nil)
 	}
 	unauthenticated := func() Decision {
 		redirect := route.Unauthenticated == UnauthenticatedRedirect ||
@@ -182,21 +214,41 @@ func (c *Core) check(ctx context.Context, r Request) Decision {
 		return unauthenticated()
 	}
 	if err != nil {
-		return Decision{Outcome: Unavailable, Status: http.StatusServiceUnavailable, Reason: "store",
-			ContentType: "application/json", Body: jsonBody(map[string]string{"error": "unavailable"})}
+		return unavailable("store")
 	}
 	if c.policy != nil {
 		res, err := c.policy.Decide(ctx, PolicyInput{Site: c.rules.Site, Route: route, Method: r.Method, Path: path,
 			Subject: s.Subject, Issuer: s.Issuer, Claims: s.Claims})
 		if err != nil {
-			return Decision{Outcome: Unavailable, Status: http.StatusServiceUnavailable, Reason: "policy",
-				ContentType: "application/json", Body: jsonBody(map[string]string{"error": "unavailable"})}
+			return unavailable("policy")
 		}
 		if !res.Allow {
 			c.Emit(ctx, Event{Kind: EventDenied, Subject: s.Subject, Issuer: s.Issuer, Route: route.Name, Reason: "forbidden", PolicyDigest: res.Digest})
 			return c.deny(http.StatusForbidden, "forbidden", map[string]string{"error": "forbidden"})
 		}
 	}
+	set := map[string]string{}
+	switch route.Mode {
+	case ModeExchange:
+		tok, err := c.tokenFor(ctx, s, route.Audience)
+		switch {
+		case errors.Is(err, errSessionEnded):
+			d := unauthenticated()
+			d.SetCookies = append(d.SetCookies, c.ClearSessionCookie())
+			return d
+		case errors.Is(err, errExchangeRefused):
+			return c.exchangeRefused(r)
+		case err != nil:
+			return unavailable("exchange")
+		}
+		set["authorization"] = "Bearer " + tok
+	case ModeIdentityHeader:
+		h, err := c.identityFor(ctx, s, route)
+		if err != nil {
+			return unavailable("identity")
+		}
+		set[IdentityHeader] = h
+	}
 	c.touch(ctx, s)
-	return allow(s)
+	return allow(s, set)
 }

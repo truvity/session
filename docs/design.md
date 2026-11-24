@@ -122,7 +122,7 @@ There is no S7. The ids are the ones the conformance suite cites.
 | id | 256 random bits, only in the cookie. The store key is a keyed hash of it, so a store leak gives no usable cookie |
 | subject, issuer, `sid` | From the ID token. Pointer items for back-channel logout hold the session keys under `sid` and subject (section 8) |
 | tokens | The sign-in access token and refresh token |
-| exchanged tokens | One entry per audience, see section 7 |
+| exchanged tokens | Not in the record: one item for each audience under the session's store key, see section 7 |
 | created, last seen, expires | Idle and maximum lifetime. `created` is in milliseconds, for the logout comparison (section 8) |
 | claims | The person's claims cached at sign-in, which the policy decision reads (section 9) |
 
@@ -216,16 +216,17 @@ sequenceDiagram
 
 Rules:
 
-- The cache key is session id, audience and scope. Entries expire with the token, minus a skew.
-- A lock (single flight) stops many parallel requests from exchanging at once.
-- Cache entries are deleted with the session, at logout and at back-channel logout.
-- If the exchange is refused, the answer is 403 for that route: JSON on an API route, a plain error page on a page route, from a template for each site. The session stays.
-- The access token of the sign-in is refreshed under the same lock when it is old. If the refresh fails, the session ends.
-- A route may ask for a signed identity header instead, with user and groups, for apps that cannot handle tokens. The service signs it through the key port and publishes the public keys at `/_session/jwks`. It lives about a minute.
+- The request is the one the sluis v2 exchange serves: the session's access token as `subject_token` of type `access_token`, `requested_token_type` `access_token`, the route's `audience`, and the client's `private_key_jwt` assertion. No `scope` and no `resource`, which sluis refuses.
+- The cache key is session id, audience and scope (empty in this version). A cached token is an item under the session's store key, sealed, and ends with the token minus a skew of 30 seconds.
+- A lock (single flight) stops many parallel requests from exchanging at once: an item under the session's key, put only when absent, which ends on its own after the exchange timeout (2 seconds). The others wait for the holder's token.
+- Cache entries are deleted with the session, at logout and at back-channel logout: the items under the session's key, found by prefix.
+- If the exchange is refused (an OAuth error answer), the answer is 403 for that route: JSON to a request that is not a navigation, the site's error page (`error_page` in the site file, or a built-in page) to a navigation. The session stays. An issuer that does not answer is a 503.
+- The access token of the sign-in is refreshed under the same lock when it ends within the skew. If the issuer refuses the refresh with `invalid_grant`, or there is no refresh token, the session ends; an outage is a 503 and the session stays.
+- A route may ask for a signed identity header instead, with user and groups, for apps that cannot handle tokens: `X-Session-Identity`, a JWS of `typ` `session-identity+jwt` with `iss` the site's origin, `aud` the route's audience (or the origin), `sub`, `name`, `email` and `groups`. The service signs it through the key port with a key of its own (the purpose `identity-header`) and publishes the public keys at `/_session/jwks`. It lives a minute, and a replica reuses a header for half of that.
 - Forwarding the session token itself is not offered, because one token would be valid on every API.
 - On the API Gateway HTTP API the token travels in `X-Session-Token`, because `Authorization` is reserved there.
 
-The records are [0005](decisions/0005-tokens-per-api-and-issuers.md).
+The records are [0005](decisions/0005-tokens-per-api-and-issuers.md) and, for the choices of the build, [0016](decisions/0016-exchange-client-and-identity-header.md).
 
 ## 8. Logout
 
@@ -288,14 +289,14 @@ Sessions can live in any atoom store driver that passes the kit. A driver declar
 | --- | --- |
 | Expiry | A TTL attribute, plus an explicit expiry check on read, because TTL deletion is lazy |
 | Idle refresh | A conditional update, at most once a minute for each session |
-| Exchange lock | A conditional write with a short expiry, one item for each session and audience |
+| Exchange lock | A conditional write with a short expiry, one item for each session and audience, under the session's key |
 | Back-channel logout | Pointer items per `sid` and per subject, written in the session-creation transaction, read with a strongly consistent get. A tombstone read once at creation. No secondary index |
-| Token cache | Items under the session, deleted with it |
+| Token cache | Items under the session's key (`<session key>/e/<hash>`), sealed, deleted with it: one `Query` by prefix at a logout, on sites with exchange routes |
 | Timeouts | Every store call has a timeout shorter than the proxy's timeout for the check, so a slow store is a down store and the check answers 503 |
 
 Rules:
 
-- The check reads the session item for each request, and nothing else: one strongly consistent read, which is 1 read unit on DynamoDB for an item under 4 KB. Reading tombstones on each request was tested and rejected: it costs 3 read units instead of 1.
+- The check reads the session item for each request, and nothing else: one strongly consistent read, which is 1 read unit on DynamoDB for an item under 4 KB. Reading tombstones on each request was tested and rejected: it costs 3 read units instead of 1. A route of mode `exchange` reads the cached token as well.
 - A memory store exists for tests only and refuses to start in production mode.
 - The Helm chart takes the store and key driver settings and a cloud identity. It does not run a store.
 
@@ -361,9 +362,9 @@ routes:
 | `public` | Nothing. No session needed |
 | `session` | Only that the session is valid, plus the cookie-stripped `Cookie` header |
 | `exchange` | `Authorization: Bearer` with the token for the audience (`X-Session-Token` on the API Gateway HTTP API) |
-| `identity-header` | A signed identity header |
+| `identity-header` | A signed identity header, `X-Session-Identity`. The route's optional `audience` is its `aud` |
 
-Routes are matched in order. The first match wins; a path that matches no route is a 404 `no_route`. In this version the modes `exchange` and `identity-header` are refused at start, until step 3 ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)). The site file is read through the `source` port as the document `site` (the file `site.jws`), the policy bundle as `policy-bundle` (`policy-bundle.jws`). The check matches on the normalised path, and the host proxy must route on the same normalised path (see the threat model). On Lambda the site file and the policy bundle are the configuration layer ([0012](decisions/0012-lambda.md)). Which store and key drivers run is a start-up setting, not part of the site file.
+Routes are matched in order. The first match wins; a path that matches no route is a 404 `no_route`. A route of mode `exchange` must name its `audience`; the modes `public` and `session` take none. `error_page` names a document of the source port: the HTML page a navigation gets when an exchange is refused ([0016](decisions/0016-exchange-client-and-identity-header.md)). The site file is read through the `source` port as the document `site` (the file `site.jws`), the policy bundle as `policy-bundle` (`policy-bundle.jws`). The check matches on the normalised path, and the host proxy must route on the same normalised path (see the threat model). On Lambda the site file and the policy bundle are the configuration layer ([0012](decisions/0012-lambda.md)). Which store and key drivers run is a start-up setting, not part of the site file.
 
 ## 11. Repository contents
 
@@ -420,6 +421,8 @@ The full model goes into `docs/threat-model.md` with the first code.
 | A tampered or stale policy bundle | The signature is verified before parsing. A failed reload keeps the last good set, and a cold start without a valid set refuses to run. Each decision is audited with the digest of its set |
 | Audit loss | Security-audit events may be dropped when the transport is down. Drops are counted and raise an alert. A check is never blocked by audit |
 | Token blast radius | One token per API audience. No token valid everywhere |
+| A forged or replayed identity header | The host strips the browser's (S8). The header is signed by a key of its own, has its own `typ`, and lives a minute; an app checks `typ`, `iss`, `aud` and `exp` against `/_session/jwks` |
+| A cached token outliving a logout | Cached tokens live under the session's key and are deleted with it; a check reads the session before the cache |
 | Cross-site embedding | `SameSite=Lax` and no `Domain`. Sites are separate hosts |
 
 ## 14. Testing
@@ -444,6 +447,8 @@ The conformance suite drives a headless browser through the real flows: sign-in,
 | Lambda: the Web Adapter, layers | [0012](decisions/0012-lambda.md) |
 | The authorizer is a native Go handler | [0014](decisions/0014-authorizer-native-go-handler.md) |
 | The group SSO reference stand | [0013](decisions/0013-reference-stand.md) |
+| Envoy HTTP mode, the CSRF header, the choices of step 2 | [0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md) |
+| The exchange client and the identity header, the choices of step 3.1 | [0016](decisions/0016-exchange-client-and-identity-header.md) |
 
 ## 16. Status and next steps
 
@@ -455,7 +460,11 @@ Planned, in order:
 
 1. **Fit spike**, about a day (done, not yet in an account: [findings](spike-2026-11-22.md)): the check core on atoom 0.2.0's `store/dynamodb` and `key` drivers mounted in-process; authorizer events through the Lambda Web Adapter; the short check in a real AWS account that the first spike could not make (section 17).
 2. **Check core, sign-in handler and Envoy adapters** against Keycloak, about four to five days. The broker rules and the browser library come from the group SSO reference stand where they fit.
-3. **nginx adapter, AWS KMS, the exchange client and the conformance suite**, with the stand's scenarios and Keycloak findings, about three to four days. It needs from atoom: the `seal` block, the Go `source/file` driver, the Cedar loader with its decision test set and the durability field; and from `truvity/audit`, the emitter in Go.
+3. **nginx adapter, AWS KMS, the exchange client and the conformance suite**, with the stand's scenarios and Keycloak findings, about three to four days. It needs from atoom: the `seal` block, the Go `source/file` driver, the Cedar loader with its decision test set and the durability field; and from `truvity/audit`, the emitter in Go. One pull request for each part:
+   1. **The exchange client and the identity header** (built, [0016](decisions/0016-exchange-client-and-identity-header.md)): the route modes `exchange` and `identity-header`, tested against Keycloak's standard token exchange and through Envoy. Needs nothing new from atoom.
+   2. **The nginx adapter**: `auth_request` with the markers of [0011](decisions/0011-host-adapter-rules.md) and the example config.
+   3. **AWS KMS**: the `key/awskms` driver as a start-up setting for the client assertion and the identity header.
+   4. **The conformance suite**: a headless browser through the real flows on every host, with the stand's scenarios.
 4. **First version** for the first sites.
 5. **Lambda:** the sign-in handler behind the Web Adapter and the authorizer as a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)), HTTP API first, then REST API.
 6. **sluis v2 as an issuer** once PAR and `private_key_jwt` land there. Sites on sluis v1 wait for v2.

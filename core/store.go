@@ -140,6 +140,13 @@ func (c *Core) Load(ctx context.Context, id string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	return c.loadKey(ctx, key)
+}
+
+// loadKey reads a session by its store key, as Load does.
+func (c *Core) loadKey(ctx context.Context, key []byte) (*Session, error) {
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
 	res, err := c.items.Get(ctx, connect.NewRequest(&storev1.ItemGetRequest{Key: key, Linearizable: true}))
 	if notFound(err) {
 		return nil, ErrNotFound
@@ -278,19 +285,67 @@ func (c *Core) deleteKey(ctx context.Context, key []byte) error {
 	return err
 }
 
-// Delete ends a session by its cookie id (the person's own logout). Its pointer entries stay until they expire: a stale member
-// costs one failed delete at a back-channel logout.
+// maxTransact is the most operations session puts in one Transact: DynamoDB's limit of 100 writes in one transaction, which
+// is lower than the store contract's 256 (atoom store/dynamodb, rules.go).
+const maxTransact = 100
+
+// sessionDeletes lists the deletes that end a session: its item and, on a site with exchange routes, every item under it (the
+// cached tokens and the exchange locks), found with a linearizable Query by the prefix of its key (decision 0016).
+func (c *Core) sessionDeletes(ctx context.Context, key []byte) ([]*storev1.Delete, error) {
+	dels := []*storev1.Delete{{Key: key}}
+	if exchange, _ := c.rules.needs(); !exchange {
+		return dels, nil
+	}
+	prefix := append(append([]byte(nil), key...), '/')
+	var token []byte
+	for {
+		res, err := c.items.Query(ctx, connect.NewRequest(&storev1.QueryRequest{Prefix: prefix, PageSize: 100, PageToken: token, Linearizable: true}))
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range res.Msg.GetItems() {
+			dels = append(dels, &storev1.Delete{Key: it.GetKey()})
+		}
+		token = res.Msg.GetNextPageToken()
+		if len(token) == 0 {
+			return dels, nil
+		}
+	}
+}
+
+// deleteAll deletes in chunks of maxTransact, in order.
+func (c *Core) deleteAll(ctx context.Context, dels []*storev1.Delete) error {
+	for start := 0; start < len(dels); start += maxTransact {
+		end := min(start+maxTransact, len(dels))
+		if _, err := c.items.Transact(ctx, connect.NewRequest(&storev1.TransactRequest{Deletes: dels[start:end]})); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteSession deletes a session by its store key, with the items under it.
+func (c *Core) deleteSession(ctx context.Context, key []byte) error {
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
+	dels, err := c.sessionDeletes(ctx, key)
+	if err != nil {
+		return err
+	}
+	return c.deleteAll(ctx, dels)
+}
+
+// Delete ends a session by its cookie id (the person's own logout), with its cached tokens. Its pointer entries stay until
+// they expire: a stale member costs one failed delete at a back-channel logout.
 func (c *Core) Delete(ctx context.Context, id string) error {
 	if !validID(id) {
 		return nil
 	}
-	ctx, cancel := c.bound(ctx)
-	defer cancel()
 	key, err := c.sessionKey(ctx, id)
 	if err != nil {
 		return err
 	}
-	return c.deleteKey(ctx, key)
+	return c.deleteSession(ctx, key)
 }
 
 func (c *Core) tombstoneKeys(ctx context.Context, iss, sid, sub string) ([][]byte, error) {
@@ -380,14 +435,15 @@ func (c *Core) LogoutBy(ctx context.Context, iss, sid, sub string) (int, error) 
 	members := slices.Compact(slices.Sorted(slices.Values(p.Members)))
 	dels := []*storev1.Delete{{Key: pk}}
 	for _, m := range members {
-		dels = append(dels, &storev1.Delete{Key: []byte(m)})
-	}
-	// The store takes at most 256 operations in one transaction: delete in chunks, the pointer in the first.
-	for start := 0; start < len(dels); start += 256 {
-		end := min(start+256, len(dels))
-		if _, err := c.items.Transact(ctx, connect.NewRequest(&storev1.TransactRequest{Deletes: dels[start:end]})); err != nil {
+		md, err := c.sessionDeletes(ctx, []byte(m))
+		if err != nil {
 			return 0, err
 		}
+		dels = append(dels, md...)
+	}
+	// Delete in chunks that DynamoDB takes in one transaction, the pointer in the first.
+	if err := c.deleteAll(ctx, dels); err != nil {
+		return 0, err
 	}
 	return len(members), nil
 }

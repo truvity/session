@@ -20,13 +20,22 @@ import (
 	"github.com/truvity/session/core"
 )
 
-// PurposeClientAssertion is the key port's purpose whose key signs the private_key_jwt client assertion (S3). session declares
-// it to the key driver (atoom 0.3.0: the key port takes any purpose its host declares).
-const PurposeClientAssertion = "client-assertion"
+// The key port's purposes session declares to the key driver (atoom 0.3.0: the key port takes any purpose its host declares).
+// Each has its own key, so the client assertion and the identity header never share one (decision 0016).
+const (
+	// PurposeClientAssertion signs the private_key_jwt client assertion (S3).
+	PurposeClientAssertion = "client-assertion"
+	// PurposeIdentityHeader signs the identity header of the route mode identity-header.
+	PurposeIdentityHeader = "identity-header"
+)
 
 // Purposes are the key purposes session declares.
 func Purposes() []purpose.Declaration {
-	return []purpose.Declaration{{Name: PurposeClientAssertion, Algorithm: purpose.ES256, Operations: []purpose.Operation{purpose.Sign}}}
+	sign := []purpose.Operation{purpose.Sign}
+	return []purpose.Declaration{
+		{Name: PurposeClientAssertion, Algorithm: purpose.ES256, Operations: sign},
+		{Name: PurposeIdentityHeader, Algorithm: purpose.ES256, Operations: sign},
+	}
 }
 
 // Signer signs JWTs with a key of the key port. The key never leaves the driver: the signer hashes, the port signs the digest,
@@ -34,6 +43,8 @@ func Purposes() []purpose.Declaration {
 type Signer struct {
 	Keys    keyv1alpha1connect.KeyStoreServiceClient
 	Purpose string
+	// Typ is the JWS typ; empty is JWT. The identity header's is core.IdentityType.
+	Typ string
 }
 
 // Ensure makes the key if the driver has none yet.
@@ -57,13 +68,17 @@ func (s Signer) JWK(ctx context.Context) (jose.JSONWebKey, error) {
 
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
-// Sign makes a compact JWS of the claims, typ JWT.
+// Sign makes a compact JWS of the claims, of the signer's typ.
 func (s Signer) Sign(ctx context.Context, claims map[string]any) (string, error) {
 	jwk, err := s.JWK(ctx)
 	if err != nil {
 		return "", err
 	}
-	h, err := json.Marshal(map[string]string{"alg": purpose.ES256, "typ": "JWT", "kid": jwk.KeyID})
+	typ := s.Typ
+	if typ == "" {
+		typ = "JWT"
+	}
+	h, err := json.Marshal(map[string]string{"alg": purpose.ES256, "typ": typ, "kid": jwk.KeyID})
 	if err != nil {
 		return "", err
 	}

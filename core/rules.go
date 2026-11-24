@@ -20,20 +20,27 @@ const (
 	PathJWKS        = Prefix + "jwks"
 )
 
-// The defaults of decision 0004 and of the first spike.
+// The defaults of decision 0004, of the first spike and of step 3.1 (decision 0016).
 const (
 	DefaultIdle         = 30 * time.Minute
 	DefaultMax          = 8 * time.Hour
 	DefaultTouchEvery   = time.Minute
 	DefaultStoreTimeout = 1500 * time.Millisecond
 	SignInLifetime      = 10 * time.Minute
+	// DefaultExchangeTimeout bounds the part of a check that makes an exchange: the lock, a refresh, the call to the issuer
+	// and the cache write. A check that waits for another's exchange waits as long.
+	DefaultExchangeTimeout = 2 * time.Second
+	// DefaultExchangeSkew is taken off a token's expiry: a cached token is not used, and a sign-in token is refreshed, this
+	// long before the token ends.
+	DefaultExchangeSkew = 30 * time.Second
+	// DefaultIdentityLifetime is the life of a signed identity header (decision 0005: about a minute).
+	DefaultIdentityLifetime = time.Minute
 )
 
 // Mode is what a route needs (design section 10).
 type Mode string
 
-// The route modes. ModeExchange and ModeIdentityHeader are part of the site file's shape, but the check of this version
-// refuses to start with them: the exchange client and the identity header come in later steps of the plan.
+// The route modes. ModeExchange needs the block's Issuer and ModeIdentityHeader its Identity signer (decision 0016).
 const (
 	ModePublic         Mode = "public"
 	ModeSession        Mode = "session"
@@ -58,7 +65,9 @@ type Route struct {
 	Exact           string
 	Mode            Mode
 	Unauthenticated Unauthenticated
-	Audience        string // for ModeExchange
+	// Audience is the API audience of the token for ModeExchange (required), and the aud claim of the identity header for
+	// ModeIdentityHeader (optional; the site's own origin when empty).
+	Audience string
 }
 
 func (r Route) matches(path string) bool {
@@ -85,6 +94,12 @@ type Rules struct {
 	StoreTimeout time.Duration
 	// Routes is the route table.
 	Routes []Route
+	// ExchangeTimeout bounds the exchange of one check (lock, refresh, issuer call, cache write); ExchangeSkew is taken off
+	// every token's expiry; IdentityLifetime is the life of a signed identity header.
+	ExchangeTimeout, ExchangeSkew, IdentityLifetime time.Duration
+	// ErrorPage is the page a navigation gets when the issuer refuses the exchange for its route (decision 0005: a plain
+	// error page from a template for each site). Empty is the built-in page.
+	ErrorPage []byte
 }
 
 // WithDefaults returns a copy of the rules with the defaults filled in.
@@ -101,6 +116,18 @@ func (r Rules) WithDefaults() Rules {
 	}
 	if r.StoreTimeout == 0 {
 		r.StoreTimeout = DefaultStoreTimeout
+	}
+	if r.ExchangeTimeout == 0 {
+		r.ExchangeTimeout = DefaultExchangeTimeout
+	}
+	if r.ExchangeSkew == 0 {
+		r.ExchangeSkew = DefaultExchangeSkew
+	}
+	if r.IdentityLifetime == 0 {
+		r.IdentityLifetime = DefaultIdentityLifetime
+	}
+	if len(r.ErrorPage) == 0 {
+		r.ErrorPage = []byte(defaultErrorPage)
 	}
 	for i := range r.Routes {
 		if r.Routes[i].Name == "" {
@@ -138,6 +165,9 @@ func (r Rules) Validate() error {
 	if r.StoreTimeout <= 0 {
 		errs = append(errs, errors.New("store timeout must be positive"))
 	}
+	if r.ExchangeTimeout <= 0 || r.ExchangeSkew <= 0 || r.IdentityLifetime <= 0 {
+		errs = append(errs, errors.New("the exchange timeout, the exchange skew and the identity header's lifetime must be positive"))
+	}
 	if len(r.Routes) == 0 {
 		errs = append(errs, errors.New("routes: at least one route"))
 	}
@@ -154,10 +184,19 @@ func (r Rules) Validate() error {
 		}
 		switch rt.Mode {
 		case ModePublic, ModeSession:
-		case ModeExchange, ModeIdentityHeader:
-			errs = append(errs, fmt.Errorf("%s: mode %s is not built yet", at, rt.Mode))
+			if rt.Audience != "" {
+				errs = append(errs, fmt.Errorf("%s: mode %s takes no audience", at, rt.Mode))
+			}
+		case ModeExchange:
+			if rt.Audience == "" {
+				errs = append(errs, fmt.Errorf("%s: mode exchange needs the API audience", at))
+			}
+		case ModeIdentityHeader:
 		default:
 			errs = append(errs, fmt.Errorf("%s: mode %q: public, session, exchange or identity-header", at, rt.Mode))
+		}
+		if len(rt.Audience) > maxAudience || strings.ContainsAny(rt.Audience, " \t\r\n") {
+			errs = append(errs, fmt.Errorf("%s: an audience of at most %d characters, without white space", at, maxAudience))
 		}
 		switch rt.Unauthenticated {
 		case UnauthenticatedDefault, UnauthenticatedRedirect, Unauthenticated401:
@@ -173,6 +212,18 @@ func (r Rules) Validate() error {
 		names[rt.Name] = true
 	}
 	return errors.Join(errs...)
+}
+
+// maxAudience bounds an audience: a client id or a URL.
+const maxAudience = 256
+
+// needs says which of the block's optional dependencies the route table needs.
+func (r Rules) needs() (issuer, identity bool) {
+	for _, rt := range r.Routes {
+		issuer = issuer || rt.Mode == ModeExchange
+		identity = identity || rt.Mode == ModeIdentityHeader
+	}
+	return issuer, identity
 }
 
 // match returns the first route that matches the path, or false.
