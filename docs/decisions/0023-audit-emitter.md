@@ -1,6 +1,6 @@
 # 0023. The emitter of truvity/audit: the choices of the switch from the stand-in
 
-Status: proposed
+Status: accepted, 2026-11-25 (owner decision on the pull request of the move to the emitter of truvity/audit)
 Date: 2026-11-25
 
 Carries out what [0008](0008-audit.md) decided (security-audit events through the emitter of `truvity/audit`, over atoom's `transport` port, to the audit writer of the environment), now that `truvity/audit` 0.19.0 has the emitter in Go. It keeps every rule of 0008 and the fail-closed sign-in of [0015](0015-envoy-http-mode-csrf-header-and-step-2-choices.md).
