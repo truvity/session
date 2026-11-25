@@ -5,6 +5,7 @@ import (
 	"github.com/truvity/atoom/key/gen/atoom/key/v1alpha1/keyv1alpha1connect"
 	"github.com/truvity/atoom/key/purpose"
 	"github.com/truvity/atoom/key/software"
+	"github.com/truvity/atoom/source/appconfig"
 	"github.com/truvity/atoom/source/file"
 	"github.com/truvity/atoom/source/gen/atoom/source/v1alpha1/sourcev1alpha1connect"
 	storedyn "github.com/truvity/atoom/store/dynamodb"
@@ -68,4 +69,23 @@ func FileSource(dir string) (*Source, error) {
 	hc, stop := Mount(path, h)
 	return &Source{Source: sourcev1alpha1connect.NewSourceServiceClient(hc, "http://source", call.ClientOptions()...),
 		Stop: func() { stop(); _ = d.Close() }}, nil
+}
+
+// SiteDocument is the name of the site file in the source port: site.jws for the file driver, the configuration profile that
+// --source-appconfig names for the AppConfig driver.
+const SiteDocument = "site"
+
+// AppConfigSource mounts atoom's Go source/appconfig driver over the AppConfig data client, for one application and environment
+// (decision 0032). The site file is the configuration profile siteProfile; every other document the site file names (the policy
+// bundle, the error page) is the profile of its own name. The driver calls nothing until the first read, and polls AppConfig at
+// most once in each interval AppConfig answers.
+func AppConfigSource(api appconfig.API, application, environment, siteProfile string) (*Source, error) {
+	svc, err := appconfig.New(appconfig.Options{AppConfig: api, Application: application, Environment: environment,
+		Profiles: map[string]string{SiteDocument: siteProfile}})
+	if err != nil {
+		return nil, err
+	}
+	path, h := svc.Handler()
+	hc, stop := Mount(path, h)
+	return &Source{Source: sourcev1alpha1connect.NewSourceServiceClient(hc, "http://source", call.ClientOptions()...), Stop: stop}, nil
 }

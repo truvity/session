@@ -7,13 +7,14 @@ keycloak_image := "quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd
 envoy_image := "envoyproxy/envoy:v1.39.6@sha256:1fde8efee875e4e4f6a39a90fe49d9338e1caacce5762034ef9fb4bbb9ad6aed"
 nginx_image := "nginx:1.30.8-alpine-slim@sha256:e9eaa7298465eab06d618c51556fdcf3fb5061f9ff40bd28ee898fbd7ee7f900"
 browser_image := "chromedp/headless-shell:157.0.8103.27@sha256:7bee201478b2f6266aae01243740ee85c16281e32f42d3aed9fdf04f4eace7a1"
+nats_image := "nats:2.15.2-alpine@sha256:afae2fdbe2e326c65e1246cb83b9d05d319188734f3bd577ac8072daae78a10f"
 dynamodb_image := "amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86"
 
 default:
     @just --list
 
 # Everything CI runs.
-check: lint build test test-dynamodb test-keycloak test-envoy test-nginx test-conformance vuln
+check: lint build test test-dynamodb test-nats test-keycloak test-envoy test-nginx test-conformance vuln
 
 # Build every package. CGO is off: the binary is static.
 build:
@@ -50,6 +51,26 @@ test-dynamodb:
     done
     SESSION_TEST_DYNAMODB="http://127.0.0.1:$port" go test -count=1 -v ./core/... 2>&1 \
       | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/ && !/WARN refused method=Transact code=aborted/' ; test "${PIPESTATUS[0]}" -eq 0
+
+# The audit switch --audit-nats (atoom's Go transport/nats in the process) against a NATS server with JetStream in a container that
+# asks for a random token and is removed at the end. The test makes its stream, as a deployment would, and session only publishes.
+test-nats:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="session-test-nats-$$"
+    port=$((20000 + RANDOM % 20000))
+    token=$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
+    docker run -d --rm --name "$name" -p "127.0.0.1:$port:4222" {{ nats_image }} -js --auth "$token" >/dev/null
+    trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+    up=""
+    for _ in $(seq 1 60); do
+        if docker logs "$name" 2>&1 | grep -q "Server is ready"; then up=1; break; fi
+        sleep 0.5
+    done
+    if [ -z "$up" ]; then docker logs "$name" 2>&1 | tail -40; exit 1; fi
+    SESSION_TEST_NATS="nats://127.0.0.1:$port" SESSION_TEST_NATS_TOKEN="$token" \
+      go test -count=1 -v -run '^TestTheSignInRecordLandsOnceOnNATS$' ./cmd/session/ 2>&1 \
+      | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/' ; test "${PIPESTATUS[0]}" -eq 0
 
 # The sign-in handler against a test Keycloak in a container (host network, a free port, a random admin password), removed at the
 # end. The tests make their own realms through the admin API.

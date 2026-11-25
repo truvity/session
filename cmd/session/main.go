@@ -3,8 +3,9 @@
 // On AWS Lambda, the sign-in function is `session serve` behind the Lambda Web Adapter (decision 0012), and the API Gateway
 // authorizer is `session authorizer`, a native Go handler of the same check (decision 0014).
 //
-//	session serve --config-dir DIR --dynamodb-table NAME [--key-dir DIR] [--key PURPOSE=DRIVER[:KEY] ...] --audit-socket PATH|--audit-stdout [flags]
-//	session authorizer --config-dir DIR --dynamodb-table NAME [...]   the API Gateway Lambda authorizer (a Lambda function only)
+//	session serve --config-dir DIR|--source-appconfig APP/ENV/PROFILE --dynamodb-table NAME [--key-dir DIR] [--key PURPOSE=DRIVER[:KEY] ...]
+//	              --audit-socket PATH|--audit-nats URL ...|--audit-sqs QUEUE_URL|--audit-stdout [flags]
+//	session authorizer --config-dir DIR|--source-appconfig APP/ENV/PROFILE --dynamodb-table NAME [...]   the API Gateway Lambda authorizer (a Lambda function only)
 //	session check --site FILE      validate a site file
 //	session version
 package main
@@ -28,8 +29,10 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/appconfigdata"
 	awsdynamodb "github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	awskmsapi "github.com/aws/aws-sdk-go-v2/service/kms"
+	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
 	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	"google.golang.org/grpc"
 
@@ -98,15 +101,23 @@ func check(args []string) error {
 }
 
 type serveFlags struct {
-	configDir, keyDir, auditScope    string
+	configDir, sourceAppConfig       string
+	keyDir, auditScope               string
 	table, endpoint                  string
 	listen, admin                    string
 	checkGRPC, checkHTTP, checkNginx string
 	storeTimeout, exchangeTimeout    time.Duration
 	keys                             listFlag
 	kmsAliasPrefix, kmsEndpoint      string
-	auditSocket                      string
-	auditStdout                      bool
+	audit                            auditFlags
+}
+
+// auditFlags are the start-up switches of the audit transport (decisions 0024 and 0032): exactly one place for the records.
+type auditFlags struct {
+	socket string // --audit-socket: the emit socket of a transport driver (transport-spool)
+	stdout bool   // --audit-stdout: JSON lines on stdout, for local development
+	sqs    string // --audit-sqs: the FIFO queue of atoom's Go transport/sqs, in this process
+	nats   audit.NATSOptions
 }
 
 // listFlag is a flag that may be given more than once.
@@ -117,17 +128,30 @@ func (l *listFlag) Set(v string) error { *l = append(*l, v); return nil }
 
 // commonFlags are the flags of every command that runs the check: the site, the drivers of the ports, audit and the timeouts.
 func commonFlags(fs *flag.FlagSet, f *serveFlags) {
-	fs.StringVar(&f.configDir, "config-dir", "", "the directory of the source port's file driver: site.jws (the site file, YAML) and the policy bundle")
+	fs.StringVar(&f.configDir, "config-dir", "", "the directory of the source port's file driver: site.jws (the site file, YAML) and the policy bundle; "+
+		"refused with --source-appconfig")
+	fs.StringVar(&f.sourceAppConfig, "source-appconfig", "", "APP/ENV/PROFILE: read the documents through atoom's AWS AppConfig driver in this process, "+
+		"from the application APP and its environment ENV; the site file is the configuration profile PROFILE, every other document the profile of its name; "+
+		"refused with --config-dir")
 	fs.StringVar(&f.keyDir, "key-dir", "", "the state directory of the software key driver (mode 0700); required when a key purpose is on it")
 	fs.Var(&f.keys, "key", "the key driver of a key purpose (client-assertion, identity-header, wrapping): PURPOSE=software, PURPOSE=awskms "+
 		"(the KMS key under the alias alias/<kms-alias-prefix>/PURPOSE) or PURPOSE=awskms:KEY (a KMS key ID, key ARN or alias name); "+
 		"repeatable; a purpose not named is on software")
 	fs.StringVar(&f.kmsAliasPrefix, "kms-alias-prefix", "", "the alias prefix of the KMS keys of --key PURPOSE=awskms; empty is session/<site>")
 	fs.StringVar(&f.kmsEndpoint, "kms-endpoint", "", "an AWS KMS endpoint other than AWS's")
-	fs.StringVar(&f.auditSocket, "audit-socket", "", "the emit socket of atoom's transport port (a transport driver such as transport-spool: DIR/emit.sock), "+
-		"to the audit writer; session refuses to start without it unless --audit-stdout is given, and refuses both")
-	fs.BoolVar(&f.auditStdout, "audit-stdout", false, "write each security-audit record as one JSON line to stdout, for local development: "+
-		"no writer receives them; refused with --audit-socket")
+	fs.StringVar(&f.audit.socket, "audit-socket", "", "the emit socket of atoom's transport port (a transport driver such as transport-spool: DIR/emit.sock), "+
+		"to the audit writer; exactly one of --audit-socket, --audit-nats, --audit-sqs and --audit-stdout")
+	fs.StringVar(&f.audit.nats.URL, "audit-nats", "", "the NATS server or servers (comma separated) of atoom's NATS JetStream transport driver, in this process, "+
+		"to the audit writer; with --audit-nats-stream and --audit-nats-subject; exactly one of the four audit switches")
+	fs.StringVar(&f.audit.nats.Stream, "audit-nats-stream", "", "the JetStream stream of the audit log, made by the deployment (with --audit-nats)")
+	fs.StringVar(&f.audit.nats.Subject, "audit-nats-subject", "", "the subject the records are published to, which the stream captures (with --audit-nats)")
+	fs.StringVar(&f.audit.nats.Creds, "audit-nats-creds", "", "a NATS credentials file, a user JWT and its seed (with --audit-nats); refused with --audit-nats-token-file")
+	fs.StringVar(&f.audit.nats.TokenFile, "audit-nats-token-file", "", "a file holding the token to present to NATS, read at every connect (with --audit-nats)")
+	fs.StringVar(&f.audit.nats.TLSCA, "audit-nats-tls-ca", "", "a PEM file of the CAs that sign the NATS server's certificate (with --audit-nats)")
+	fs.StringVar(&f.audit.sqs, "audit-sqs", "", "the URL of the SQS FIFO queue (ending in .fifo) of atoom's SQS transport driver, in this process, "+
+		"to the audit writer: the switch of a Lambda function; exactly one of the four audit switches")
+	fs.BoolVar(&f.audit.stdout, "audit-stdout", false, "write each security-audit record as one JSON line to stdout, for local development: "+
+		"no writer receives them; exactly one of the four audit switches")
 	fs.StringVar(&f.auditScope, "audit-scope", "", "the scope of the security-audit log, a label of the installation (unset is local); "+
 		"nothing in session decides by its value")
 	fs.StringVar(&f.table, "dynamodb-table", "", "the DynamoDB table of the store driver")
@@ -138,12 +162,40 @@ func commonFlags(fs *flag.FlagSet, f *serveFlags) {
 }
 
 func (f serveFlags) required() error {
-	for _, r := range []struct{ name, v string }{{"config-dir", f.configDir}, {"dynamodb-table", f.table}} {
-		if r.v == "" {
-			return fmt.Errorf("--%s is required", r.name)
-		}
+	if _, err := f.sourceChoice(); err != nil {
+		return err
+	}
+	if f.table == "" {
+		return errors.New("--dynamodb-table is required")
 	}
 	return nil
+}
+
+// sourceChoice is the driver of the source port that the flags select (decision 0032): exactly one of --config-dir and
+// --source-appconfig.
+func (f serveFlags) sourceChoice() (string, error) {
+	switch {
+	case f.configDir != "" && f.sourceAppConfig != "":
+		return "", errors.New("--config-dir and --source-appconfig are both given: name one source of the site file")
+	case f.configDir != "":
+		return "file", nil
+	case f.sourceAppConfig != "":
+		if _, _, _, err := appConfigPath(f.sourceAppConfig); err != nil {
+			return "", err
+		}
+		return "appconfig", nil
+	default:
+		return "", errors.New("--config-dir or --source-appconfig is required: the directory of the site file, or its AppConfig APP/ENV/PROFILE")
+	}
+}
+
+// appConfigPath splits the value of --source-appconfig, APP/ENV/PROFILE, three identifiers (names or ids) none of them empty.
+func appConfigPath(v string) (app, env, profile string, err error) {
+	parts := strings.Split(v, "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", "", "", fmt.Errorf("--source-appconfig %q is not APP/ENV/PROFILE", v)
+	}
+	return parts[0], parts[1], parts[2], nil
 }
 
 func serve(args []string) error {
@@ -223,12 +275,16 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 			a.close()
 		}
 	}()
-	src, err := openSource(f)
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	src, err := openSource(f, cfg)
 	if err != nil {
 		return nil, err
 	}
 	a.closers = append(a.closers, src.Stop)
-	doc, err := src.Source.Read(ctx, connect.NewRequest(&sourcev1.ReadRequest{Name: "site"}))
+	doc, err := src.Source.Read(ctx, connect.NewRequest(&sourcev1.ReadRequest{Name: atoomx.SiteDocument}))
 	if err != nil {
 		return nil, fmt.Errorf("site file: %w", err)
 	}
@@ -262,10 +318,6 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 		slog.Info("policy bundle", "digest", eng.Digest())
 		a.runners = append(a.runners, eng.Run)
 		pol = eng
-	}
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return nil, err
 	}
 	db := awsdynamodb.NewFromConfig(cfg, func(o *awsdynamodb.Options) {
 		if f.endpoint != "" {
@@ -321,7 +373,7 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	auditor, err := openAudit(a, f, sf, sb.Sealer)
+	auditor, err := openAudit(a, f, cfg, sf, sb.Sealer)
 	if err != nil {
 		return nil, err
 	}
@@ -346,13 +398,25 @@ func (a *app) signIn(ctx context.Context) error {
 	return nil
 }
 
-// openSource mounts the driver of the source port, which serves the site file and the policy bundle: atoom's Go source/file over
-// --config-dir, on every shape. On Lambda that directory is the configuration layer (decision 0012).
-//
-// The seam of atoom's B9 (decisions 0025 and 0030): the Lambda shape reads its documents through atoom's Go source/appconfig
-// once B9 ships it, selected by a start-up switch here beside --config-dir, and through the configuration layer until then; the
-// core, the policy loader and the authorizer read only the port's client, so the driver is mounted here and nothing else changes.
-func openSource(f serveFlags) (*atoomx.Source, error) {
+// openSource mounts the driver of the source port, which serves the site file and the policy bundle (decision 0032): atoom's Go
+// source/file over --config-dir, or atoom's Go source/appconfig over --source-appconfig, exactly one of them. On Lambda the
+// directory is the configuration layer (decision 0012) until a site moves to AppConfig (decision 0030). The core, the policy loader
+// and the authorizer read only the port's client, so the driver is mounted here and nothing else changes. The AppConfig client
+// takes the region, the credentials and an endpoint of another place (AWS_ENDPOINT_URL_APPCONFIGDATA) from cfg.
+func openSource(f serveFlags, cfg aws.Config) (*atoomx.Source, error) {
+	kind, err := f.sourceChoice()
+	if err != nil {
+		return nil, err
+	}
+	if kind == "appconfig" {
+		app, env, profile, _ := appConfigPath(f.sourceAppConfig)
+		src, err := atoomx.AppConfigSource(appconfigdata.NewFromConfig(cfg), app, env, profile)
+		if err != nil {
+			return nil, fmt.Errorf("source appconfig: %w", err)
+		}
+		slog.Info("source", "driver", "appconfig", "application", app, "environment", env, "profile", profile)
+		return src, nil
+	}
 	src, err := atoomx.FileSource(f.configDir)
 	if err != nil {
 		return nil, fmt.Errorf("config dir: %w", err)
@@ -368,40 +432,95 @@ func auditScope(label string) string {
 	return label
 }
 
-// auditTransport is the client of the transport port (decision 0024): the emit socket of a transport driver (--audit-socket), or,
-// with --audit-stdout for local development, the driver Lines in this process, which writes each record as one JSON line to w.
-// Exactly one of them must be given, whatever --audit-scope says. stop is nil for the socket.
-//
-// The seam of atoom's B9 (decisions 0025 and 0030): a Lambda function has no spool sidecar and so no socket. B9 brings a Go
-// transport/sqs driver, which is mounted here in this process, as Lines is, and selected by a third switch of its own beside
-// these two (exactly one of the three). Until it is released, the authorizer and the sign-in function run on Lambda only with
-// --audit-stdout, which is for local development and the emulator, not for a deployment.
-func auditTransport(socketPath string, stdout bool, w io.Writer) (transportv1alpha1connect.TransportServiceClient, func(), error) {
-	switch {
-	case socketPath != "" && stdout:
-		return nil, nil, errors.New("--audit-socket and --audit-stdout are both given: name one place for the security-audit records")
-	case socketPath != "":
-		return audit.Socket(socketPath), nil, nil
-	case stdout:
+// choice is the audit transport the flags select (decisions 0024 and 0032): exactly one of --audit-socket, --audit-nats,
+// --audit-sqs and --audit-stdout, whatever --audit-scope says. The settings of NATS need --audit-nats.
+func (a auditFlags) choice() (string, error) {
+	var given []string
+	for _, s := range []struct {
+		name string
+		set  bool
+	}{{"--audit-socket", a.socket != ""}, {"--audit-nats", a.nats.URL != ""}, {"--audit-sqs", a.sqs != ""}, {"--audit-stdout", a.stdout}} {
+		if s.set {
+			given = append(given, s.name)
+		}
+	}
+	switch len(given) {
+	case 0, 1:
+	case 2:
+		return "", fmt.Errorf("%s and %s are both given: name one place for the security-audit records", given[0], given[1])
+	default:
+		return "", fmt.Errorf("%s are all given: name one place for the security-audit records", strings.Join(given, ", "))
+	}
+	if a.nats.URL == "" {
+		for _, s := range []struct{ name, v string }{{"--audit-nats-stream", a.nats.Stream}, {"--audit-nats-subject", a.nats.Subject},
+			{"--audit-nats-creds", a.nats.Creds}, {"--audit-nats-token-file", a.nats.TokenFile}, {"--audit-nats-tls-ca", a.nats.TLSCA}} {
+			if s.v != "" {
+				return "", fmt.Errorf("%s is given without --audit-nats", s.name)
+			}
+		}
+	}
+	if len(given) == 0 {
+		return "", errors.New("an audit transport is required: --audit-socket (the emit socket of the transport driver whose consumer is the audit writer), " +
+			"--audit-nats or --audit-sqs (a transport driver in this process); --audit-stdout writes the records to stdout instead, for local development")
+	}
+	switch given[0] {
+	case "--audit-nats":
+		switch {
+		case a.nats.Stream == "" || a.nats.Subject == "":
+			return "", errors.New("--audit-nats needs --audit-nats-stream and --audit-nats-subject")
+		case a.nats.Creds != "" && a.nats.TokenFile != "":
+			return "", errors.New("--audit-nats-creds and --audit-nats-token-file are both given: name one credential")
+		}
+		return "nats", nil
+	case "--audit-sqs":
+		return "sqs", nil
+	case "--audit-socket":
+		return "socket", nil
+	default:
+		return "stdout", nil
+	}
+}
+
+// auditTransport is the client of the transport port (decisions 0024 and 0032), and the function that stops it: the emit socket of
+// a transport driver (--audit-socket); atoom's Go transport/nats (--audit-nats) or transport/sqs (--audit-sqs, the switch of a
+// Lambda function, which has no spool sidecar), mounted in this process; or, with --audit-stdout for local development, the driver
+// Lines in this process, which writes each record as one JSON line to w. Exactly one of them. The connection and credentials of
+// NATS, and the SQS client's region and credentials (from cfg), are the host's: atoom's drivers know no deployment.
+func auditTransport(a auditFlags, cfg aws.Config, w io.Writer) (transportv1alpha1connect.TransportServiceClient, func(), error) {
+	kind, err := a.choice()
+	if err != nil {
+		return nil, nil, err
+	}
+	switch kind {
+	case "socket":
+		return audit.Socket(a.socket), func() {}, nil
+	case "nats":
+		return audit.NATS(a.nats)
+	case "sqs":
+		return audit.SQS(awssqs.NewFromConfig(cfg), a.sqs)
+	default:
 		client, stop := audit.NewLines(w).Mount()
 		return client, stop, nil
-	default:
-		return nil, nil, errors.New("--audit-socket is required: the emit socket of the transport driver whose consumer is the audit writer; " +
-			"--audit-stdout writes the records to stdout instead, for local development")
 	}
 }
 
 // openAudit is the emitter of truvity/audit over the transport port (decisions 0023 and 0024), with the seal block's pseudonyms.
-func openAudit(a *app, f serveFlags, sf *site.File, seal *sealer.Sealer) (*audit.Auditor, error) {
-	tr, stop, err := auditTransport(f.auditSocket, f.auditStdout, os.Stdout)
+func openAudit(a *app, f serveFlags, cfg aws.Config, sf *site.File, seal *sealer.Sealer) (*audit.Auditor, error) {
+	tr, stop, err := auditTransport(f.audit, cfg, os.Stdout)
 	if err != nil {
 		return nil, err
 	}
-	if stop != nil {
-		a.closers = append(a.closers, stop)
+	a.closers = append(a.closers, stop)
+	kind, _ := f.audit.choice()
+	switch kind {
+	case "socket":
+		slog.Info("audit", "transport", "socket", "socket", f.audit.socket)
+	case "nats":
+		slog.Info("audit", "transport", "nats", "stream", f.audit.nats.Stream, "subject", f.audit.nats.Subject)
+	case "sqs":
+		slog.Info("audit", "transport", "sqs", "queue", f.audit.sqs)
+	default:
 		slog.Info("audit", "transport", "lines", "to", "stdout")
-	} else {
-		slog.Info("audit", "transport", "socket", "socket", f.auditSocket)
 	}
 	bundle := ""
 	if sf.Policy != nil {
