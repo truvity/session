@@ -5,6 +5,17 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### Several issuers per site
+
+- **Breaking, site file:** a site names its issuers in a list, `issuers` ([0034](docs/decisions/0034-several-issuers-per-site.md), owner decision D84 A). Each entry has an `id`, a `label`, the issuer identifier `issuer`, its `client` and its `scopes`. The top-level `issuer`, `client` and `scopes` are gone, and a file that still has them is refused with a message that names 0034: move them into one entry of `issuers` and give it an `id` and a `label`. With one issuer, behaviour is as before. No migration: nothing is deployed.
+- New: `/_session/signin`, the sign-in page of a site of several issuers: one plain link for each, "Sign in with \<label\>", no script, session's own neutral template, with a strict `Content-Security-Policy`. `/_session/login` without `issuer=` sends the browser there; `?issuer=<id>` on either path goes to that issuer at once.
+- New: `signin.remember_choice`, a duration, off by default: the issuer a person signed in with is kept in `__Host-<site>-issuer`, and a login that names no issuer goes to it. The check strips the cookie from what the site gets.
+- Each sign-in is a PAR and PKCE flow at the issuer chosen, with the site's client there and an assertion for that issuer; the transaction records the issuer, and a callback whose `iss` names another issuer is refused (the mix-up defence). A session whose issuer the site file no longer names is no session.
+- The exchange, the refresh, the revocation and the end-session go to the session's own issuer. Without a live session, a site of several issuers ends at the remembered issuer, or sends the browser back to the site. A back-channel logout token is verified by the site's issuer its `iss` names, and ends only that issuer's sessions; a token of another issuer is refused with the audit reason `issuer`.
+- Go API: `core.Options.Issuer` is now `Issuers`, by issuer identifier; `core.Rules.Issuers` lists the site's issuers; `signin.Options` takes `Issuers` and `Remember`.
+- **Breaking, remote runner:** `ISSUER=` is the id of the site file's issuer to sign in through (needed when the file has several), no longer a URL; the runner adds `?issuer=<id>` to the sign-in page.
+- New: `TestConformanceTwoIssuers`, two Keycloak realms through Envoy over gRPC: the page, `?issuer=`, a sign-in through each, a mix-up refused, a policy by issuer, the exchange at the session's issuer, logout and back-channel logout through the right issuer.
+
 ### atoom 0.8.0: the audit transports NATS and SQS, and the AppConfig source
 
 - **Every atoom module at 0.8.0** ([0032](docs/decisions/0032-atoom-0.8.0-transports-and-the-appconfig-source.md)); `go.mod` adds atoom's `transport/nats`, `transport/sqs` and `source/appconfig`. `spike/` keeps its pins. The token block's rotation ring (atoom's B8b) is not adopted: the first sites rotate no signing key ([0025](docs/decisions/0025-first-version-for-the-first-sites.md)); it is the next step.

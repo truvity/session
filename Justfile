@@ -139,7 +139,8 @@ test-conformance:
       | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/' ; test "${PIPESTATUS[0]}" -eq 0
 
 # Settings are KEY=VALUE arguments, each one becoming SESSION_REMOTE_<KEY>:
-#   just test-remote HOST=docs.devel.example.com ISSUER=https://idp.devel.example.com/realms/x IDP=mimic HINT=alice
+#   just test-remote HOST=docs.devel.example.com ISSUER=corp IDP=mimic HINT=alice
+# ISSUER is the id of the site file's issuer to sign in through (decision 0034): needed when the site file has several.
 # Keys: HOST (required), ISSUER, SITE_FILE, IDP, HINT, EMAIL, CA, RESOLVE, PROXY, MIMIC, MIMIC_TOKEN_FILE, USERNAME, AUDIT; SKIP
 # is go test's -skip. A
 # token or a password goes in the environment (SESSION_REMOTE_MIMIC_TOKEN, SESSION_REMOTE_PASSWORD), never on the command line.

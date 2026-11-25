@@ -172,15 +172,17 @@ func newStand(t *testing.T, opts ...func(*standConfig)) *stand {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := core.New(core.Options{Items: items, Seal: sealer, Audit: st.audit, Issuer: issuer, Identity: identity,
+	c, err := core.New(core.Options{Items: items, Seal: sealer, Audit: st.audit, Issuers: map[string]core.Issuer{st.issuer: issuer}, Identity: identity,
 		Now:   func() time.Time { return time.Now().Add(time.Duration(st.ahead.Load())) },
 		Rules: core.Rules{Site: "docs", Host: host, Routes: cfg.routes}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	st.core, st.exchange = c, issuer
-	st.handler, err = signin.New(ctx, signin.Options{Core: c, Issuer: st.issuer, ClientID: "session-docs",
-		Scopes: []string{"openid", "profile", "email"}, Signer: signer, Identity: &identity})
+	st.handler, err = signin.New(ctx, signin.Options{Core: c,
+		Issuers: []signin.Issuer{{ID: "corp", Label: "Example Corp", URL: st.issuer, ClientID: "session-docs",
+			Scopes: []string{"openid", "profile", "email"}}},
+		Signer: signer, Identity: &identity})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,6 +35,7 @@ import (
 	"github.com/truvity/session/internal/exchange"
 	"github.com/truvity/session/internal/kctest"
 	"github.com/truvity/session/internal/nginx"
+	"github.com/truvity/session/internal/policy/policytest"
 	"github.com/truvity/session/internal/sealer/sealertest"
 	"github.com/truvity/session/internal/signin"
 	"github.com/truvity/session/internal/storetest"
@@ -63,17 +64,19 @@ var routes = []core.Route{
 // sends its back-channel logout to the proxy's plain port, through the sign-in prefix, as an issuer inside the network would.
 type stand struct {
 	kc     *kctest.Keycloak
-	realm  string
+	realm  string // the first issuer's: realm, issuer identifier and person
 	issuer string
 	person kctest.Person
-	core   *core.Core
-	mem    *storetest.Store
-	ahead  atomic.Int64 // how far the core's clock runs ahead of the wall clock, in nanoseconds
-	origin string       // https://docs.example.test:PORT, the browser's address of the site
-	host   string       // docs.example.test:PORT
-	proxy  string       // http://127.0.0.1:PORT, the host proxy's plain listener
-	ports  map[string]int
-	audit  *records // the security-audit records, written by the emitter of truvity/audit through the driver of JSON lines
+	// issuers are the site's issuers, the first one first: one, or two on the stand of several issuers (decision 0034).
+	issuers []standIssuer
+	core    *core.Core
+	mem     *storetest.Store
+	ahead   atomic.Int64 // how far the core's clock runs ahead of the wall clock, in nanoseconds
+	origin  string       // https://docs.example.test:PORT, the browser's address of the site
+	host    string       // docs.example.test:PORT
+	proxy   string       // http://127.0.0.1:PORT, the host proxy's plain listener
+	ports   map[string]int
+	audit   *records // the security-audit records, written by the emitter of truvity/audit through the driver of JSON lines
 }
 
 // records is the writer of the driver of JSON lines: what the stand's emitter delivered, one record a line.
@@ -143,13 +146,44 @@ func serveOn(t *testing.T, h http.Handler) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// standIssuer is one issuer of the stand: a realm of the test Keycloak, its id and label in the site, and its person.
+type standIssuer struct {
+	id, label     string
+	realm, issuer string
+	person        kctest.Person
+}
+
+// standConfig is what a stand may have besides the suite's: a second issuer, with the routes and the policy that tell the
+// issuers apart (decision 0034).
+type standConfig struct {
+	partner bool
+}
+
+// The routes of the stand of two issuers: the suite's, and a route for the people of each issuer only, which the policy keeps.
+var twoIssuerRoutes = append([]core.Route{
+	{Name: "corp-only", Prefix: "/corp/", Mode: core.ModeSession},
+	{Name: "partner-only", Prefix: "/partner/", Mode: core.ModeSession},
+}, routes...)
+
+// issuerPolicy keeps each issuer's route to that issuer's people, and lets everyone else through: a policy by principal.issuer.
+func issuerPolicy(corp, partner string) string {
+	return fmt.Sprintf(`permit(principal, action, resource) unless {
+  (resource == Route::"corp-only" && principal.issuer != %q) ||
+  (resource == Route::"partner-only" && principal.issuer != %q)
+};`, corp, partner)
+}
+
 // seen is what the site behind the proxy received. The test site (package echo) echoes it; session never does.
 type seen = echo.Seen
 
 // newStand makes the session service of one host: a realm whose redirect, post-logout and back-channel addresses are this
 // stand's, the check on all three listeners, the sign-in paths and the site. The proxy is started by the host.
-func newStand(t *testing.T, kc *kctest.Keycloak) *stand {
+func newStand(t *testing.T, kc *kctest.Keycloak, cfgs ...standConfig) *stand {
 	t.Helper()
+	var cfg standConfig
+	if len(cfgs) == 1 {
+		cfg = cfgs[0]
+	}
 	ctx := context.Background()
 	st := &stand{kc: kc}
 	proxyPort := freePort(t)
@@ -197,17 +231,40 @@ func newStand(t *testing.T, kc *kctest.Keycloak) *stand {
 	}
 	jwks, _ := json.Marshal(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{jwk}})
 
-	st.realm = "session-conformance-" + strings.ToLower(core.NewID()[:8])
-	st.person = kctest.Person{Username: "alice", Password: kctest.Password(), Email: "alice@example.test", Groups: []string{"admins"}}
-	st.issuer = kc.Realm(t, kctest.RealmSpec{
-		Realm: st.realm, ClientID: "session-docs",
-		RedirectURI: st.origin + core.PathCallback, PostLogoutURI: st.origin + "/",
-		BackChannelURL: st.proxy + core.PathBackChannel, JWKS: string(jwks),
-		People: []kctest.Person{st.person}, Audiences: []string{"billing"},
-	})
-	issuer, err := exchange.New(ctx, exchange.Options{Issuer: st.issuer, ClientID: "session-docs", Asserter: signer})
-	if err != nil {
-		t.Fatal(err)
+	st.issuers = []standIssuer{{id: "corp", label: "Example Corp",
+		person: kctest.Person{Username: "alice", Password: kctest.Password(), Email: "alice@example.test", Groups: []string{"admins"}}}}
+	if cfg.partner {
+		st.issuers = append(st.issuers, standIssuer{id: "partner", label: "Example Partner",
+			person: kctest.Person{Username: "bob", Password: kctest.Password(), Email: "bob@partner.example.test", Groups: []string{"staff"}}})
+	}
+	// Each issuer is a realm of its own, with the same client id and the same client key: the site has one key for every issuer.
+	exchanges := map[string]core.Issuer{}
+	var issuerURLs []string
+	var signIns []signin.Issuer
+	for i := range st.issuers {
+		is := &st.issuers[i]
+		is.realm = "session-conformance-" + is.id + "-" + strings.ToLower(core.NewID()[:8])
+		is.issuer = kc.Realm(t, kctest.RealmSpec{
+			Realm: is.realm, ClientID: "session-docs",
+			RedirectURI: st.origin + core.PathCallback, PostLogoutURI: st.origin + "/",
+			BackChannelURL: st.proxy + core.PathBackChannel, JWKS: string(jwks),
+			People: []kctest.Person{is.person}, Audiences: []string{"billing"},
+		})
+		ex, err := exchange.New(ctx, exchange.Options{Issuer: is.issuer, ClientID: "session-docs", Asserter: signer})
+		if err != nil {
+			t.Fatal(err)
+		}
+		exchanges[is.issuer] = ex
+		issuerURLs = append(issuerURLs, is.issuer)
+		signIns = append(signIns, signin.Issuer{ID: is.id, Label: is.label, URL: is.issuer, ClientID: "session-docs",
+			Scopes: []string{"openid", "profile", "email"}})
+	}
+	st.realm, st.issuer, st.person = st.issuers[0].realm, st.issuers[0].issuer, st.issuers[0].person
+	standRoutes := routes
+	var pol core.Policy
+	if cfg.partner {
+		standRoutes = twoIssuerRoutes
+		pol = policytest.Engine(t, map[string]string{"by-issuer": issuerPolicy(st.issuers[0].issuer, st.issuers[1].issuer)})
 	}
 	st.audit = &records{}
 	tr, stopAudit := audit.NewLines(st.audit).Mount()
@@ -216,15 +273,15 @@ func newStand(t *testing.T, kc *kctest.Keycloak) *stand {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := core.New(core.Options{Items: items, Seal: sealer, Issuer: issuer, Identity: identity, Audit: auditor,
-		Now:   func() time.Time { return time.Now().Add(time.Duration(st.ahead.Load())) },
-		Rules: core.Rules{Site: "docs", Host: st.host, Routes: routes, StoreTimeout: 500 * time.Millisecond}})
+	c, err := core.New(core.Options{Items: items, Seal: sealer, Issuers: exchanges, Identity: identity, Audit: auditor, Policy: pol,
+		Now: func() time.Time { return time.Now().Add(time.Duration(st.ahead.Load())) },
+		Rules: core.Rules{Site: "docs", Host: st.host, Routes: standRoutes, Issuers: issuerURLs,
+			StoreTimeout: 500 * time.Millisecond}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	st.core = c
-	h, err := signin.New(ctx, signin.Options{Core: c, Issuer: st.issuer, ClientID: "session-docs",
-		Scopes: []string{"openid", "profile", "email"}, Signer: signer, Identity: &identity})
+	h, err := signin.New(ctx, signin.Options{Core: c, Issuers: signIns, Signer: signer, Identity: &identity})
 	if err != nil {
 		t.Fatal(err)
 	}

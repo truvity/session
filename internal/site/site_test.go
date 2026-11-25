@@ -12,11 +12,14 @@ import (
 const good = `
 site: docs
 host: docs.example.test
-issuer: https://issuer.example.test/realms/docs
-client:
-  id: session-docs
-  auth: private_key_jwt
-scopes: [openid, profile, email]
+issuers:
+  - id: corp
+    label: Example Corp
+    issuer: https://issuer.example.test/realms/docs
+    client:
+      id: session-docs
+      auth: private_key_jwt
+    scopes: [openid, profile, email]
 session:
   idle: 20m
   max: 4h
@@ -51,19 +54,29 @@ func TestAGoodSiteFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	if r.Site != "docs" || r.Idle != 20*time.Minute || r.Max != 4*time.Hour || len(r.Routes) != 3 ||
-		r.Routes[1].Unauthenticated != core.Unauthenticated401 || r.Routes[1].Name != "api" || f.Policy.Bundle != "policy-bundle" {
+		r.Routes[1].Unauthenticated != core.Unauthenticated401 || r.Routes[1].Name != "api" || f.Policy.Bundle != "policy-bundle" ||
+		len(r.Issuers) != 1 || r.Issuers[0] != "https://issuer.example.test/realms/docs" || f.Remember() != 0 {
 		t.Fatalf("%+v", r)
 	}
 }
 
 func TestBadSiteFiles(t *testing.T) {
 	cases := map[string]string{
-		"unknown key":            strings.Replace(good, "scopes:", "extra: 1\nscopes:", 1),
+		"unknown key":            strings.Replace(good, "session:", "extra: 1\nsession:", 1),
 		"duplicate key":          strings.Replace(good, "site: docs", "site: docs\nsite: other", 1),
 		"two documents":          good + "\n---\nsite: other\n",
 		"plain issuer":           strings.Replace(good, "https://issuer", "http://issuer", 1),
 		"client secret":          strings.Replace(good, "private_key_jwt", "client_secret_basic", 1),
 		"no openid":              strings.Replace(good, "[openid, profile, email]", "[profile]", 1),
+		"no issuers":             good[:strings.Index(good, "issuers:")] + good[strings.Index(good, "session:"):],
+		"the old issuer key":     strings.Replace(good, "issuers:", "issuer: https://issuer.example.test/realms/docs\nissuers:", 1),
+		"the old scopes key":     strings.Replace(good, "issuers:", "scopes: [openid]\nissuers:", 1),
+		"no issuer id":           strings.Replace(good, "id: corp", "id: \"\"", 1),
+		"a bad issuer id":        strings.Replace(good, "id: corp", "id: Corp_1", 1),
+		"no label":               strings.Replace(good, "label: Example Corp", "label: \" \"", 1),
+		"an id twice":            strings.Replace(good, "session:", second("corp", "https://other.example.test")+"session:", 1),
+		"an issuer twice":        strings.Replace(good, "session:", second("partner", "https://issuer.example.test/realms/docs")+"session:", 1),
+		"a bad remember":         strings.Replace(good, "session:", "signin:\n  remember_choice: forever\nsession:", 1),
 		"bad duration":           strings.Replace(good, "idle: 20m", "idle: soon", 1),
 		"idle above max":         strings.Replace(good, "idle: 20m", "idle: 5h", 1),
 		"exchange, no audience":  strings.Replace(good, "mode: public", "mode: exchange", 1),
@@ -80,6 +93,29 @@ func TestBadSiteFiles(t *testing.T) {
 		if _, err := site.Parse([]byte(text)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// second is a second entry of issuers.
+func second(id, issuer string) string {
+	return "  - id: " + id + "\n    label: Example Partner\n    issuer: " + issuer +
+		"\n    client:\n      id: session-docs\n      auth: private_key_jwt\n    scopes: [openid]\n"
+}
+
+func TestSeveralIssuersAndTheRememberedChoice(t *testing.T) {
+	text := strings.Replace(good, "session:", second("partner", "https://partner.example.test/realms/staff")+
+		"signin:\n  remember_choice: 720h\nsession:", 1)
+	f, err := site.Parse([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := f.Rules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Issuers) != 2 || f.Issuers[1].ID != "partner" || f.Issuers[1].Label != "Example Partner" || f.Remember() != 720*time.Hour ||
+		len(r.Issuers) != 2 || r.Issuers[1] != "https://partner.example.test/realms/staff" {
+		t.Fatalf("%+v %+v", f.Issuers, r.Issuers)
 	}
 }
 

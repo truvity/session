@@ -369,15 +369,20 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	issuer, err := exchange.New(ctx, exchange.Options{Issuer: sf.Issuer, ClientID: sf.Client.ID, Asserter: signer})
-	if err != nil {
-		return nil, err
+	// One exchange client for each issuer (decision 0034): a session's exchange and refresh go to its own issuer.
+	issuers := map[string]core.Issuer{}
+	for _, is := range sf.Issuers {
+		ex, err := exchange.New(ctx, exchange.Options{Issuer: is.Issuer, ClientID: is.Client.ID, Asserter: signer})
+		if err != nil {
+			return nil, fmt.Errorf("issuer %s: %w", is.ID, err)
+		}
+		issuers[is.Issuer] = ex
 	}
 	auditor, err := openAudit(a, f, cfg, sf, sb.Sealer)
 	if err != nil {
 		return nil, err
 	}
-	c, err := core.New(core.Options{Rules: rules, Items: st.Items, Seal: sb.Sealer, Policy: pol, Issuer: issuer, Identity: identity,
+	c, err := core.New(core.Options{Rules: rules, Items: st.Items, Seal: sb.Sealer, Policy: pol, Issuers: issuers, Identity: identity,
 		Audit: auditor})
 	if err != nil {
 		return nil, err
@@ -387,9 +392,13 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	return a, nil
 }
 
-// signIn makes the handler of the sign-in paths, which reads the issuer's discovery document.
+// signIn makes the handler of the sign-in paths, which reads each issuer's discovery document.
 func (a *app) signIn(ctx context.Context) error {
-	h, err := signin.New(ctx, signin.Options{Core: a.core, Issuer: a.site.Issuer, ClientID: a.site.Client.ID, Scopes: a.site.Scopes,
+	var issuers []signin.Issuer
+	for _, is := range a.site.Issuers {
+		issuers = append(issuers, signin.Issuer{ID: is.ID, Label: is.Label, URL: is.Issuer, ClientID: is.Client.ID, Scopes: is.Scopes})
+	}
+	h, err := signin.New(ctx, signin.Options{Core: a.core, Issuers: issuers, Remember: a.site.Remember(),
 		Signer: a.signer, Identity: &a.ident})
 	if err != nil {
 		return err

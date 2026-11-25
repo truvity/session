@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // idLen is the length of a session id in the cookie: 256 random bits, base64url without padding.
@@ -15,6 +16,16 @@ func (c *Core) CookieName() string { return "__Host-" + c.rules.Site }
 
 // BindingCookieName is the short-lived cookie that ties a sign-in transaction to the browser that started it.
 func (c *Core) BindingCookieName() string { return "__Host-" + c.rules.Site + "-signin" }
+
+// ChoiceCookieName is the cookie of the remembered choice of issuer, on a site of several issuers that remembers it (decision
+// 0034): the issuer's id in the site, no secret.
+func (c *Core) ChoiceCookieName() string { return "__Host-" + c.rules.Site + "-issuer" }
+
+// ChoiceCookie is the Set-Cookie value of the remembered choice: the issuer's id, for as long as the site remembers it.
+func (c *Core) ChoiceCookie(issuerID string, life time.Duration) string {
+	return (&http.Cookie{Name: c.ChoiceCookieName(), Value: issuerID, Path: "/", Secure: true, HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: int(life.Seconds())}).String()
+}
 
 // NewID returns a new random id of 256 bits, base64url. It is the session id of a new session, a state or a binding value.
 func NewID() string {
@@ -38,10 +49,11 @@ func validID(s string) bool {
 }
 
 // SplitCookies reads the Cookie headers. It returns the session id (the first well-formed value of the session cookie, or "")
-// and the Cookie header the upstream may see: every other cookie, without the session cookie and the binding cookie.
+// and the Cookie header the upstream may see: every other cookie, without session's own: the session cookie, the binding cookie
+// and the remembered choice.
 func (c *Core) SplitCookies(h http.Header) (id, rest string) {
 	r := http.Request{Header: http.Header{"Cookie": h.Values("Cookie")}}
-	name, bind := c.CookieName(), c.BindingCookieName()
+	name, bind, choice := c.CookieName(), c.BindingCookieName(), c.ChoiceCookieName()
 	var kept []string
 	for _, ck := range r.Cookies() {
 		switch ck.Name {
@@ -49,7 +61,7 @@ func (c *Core) SplitCookies(h http.Header) (id, rest string) {
 			if id == "" && validID(ck.Value) {
 				id = ck.Value
 			}
-		case bind:
+		case bind, choice:
 		default:
 			kept = append(kept, ck.Name+"="+ck.Value)
 		}

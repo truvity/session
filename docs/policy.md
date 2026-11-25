@@ -13,6 +13,14 @@ Only the session item the check has already read and the route of the site file.
 | resource | `Route::"<route name>"`, with the attributes `site` and `mode`. A route's name is its `name` in the site file, else its match (`/api/`) |
 | context | `path` (without the query) and `method` |
 
+On a site of several issuers ([0034](decisions/0034-several-issuers-per-site.md)), `issuer` is the identifier of the session's issuer (the ID token's `iss`), so a policy keeps a route to one issuer's people:
+
+```cedar
+permit (principal, action, resource == Route::"corp-only") when { principal.issuer == "https://issuer.example.com/realms/corp-staff" };
+```
+
+A subject is unique only within its issuer: a policy that names one person (`principal == User::"<subject>"`) tests `principal.issuer` too.
+
 A route that does not need a session (`public`) is never asked about. Without a policy bundle the route table decides alone. A denial is a 403 `{"error":"forbidden"}` and a security-audit event `denied` that carries the digest of the policy set. A request that does not fit the bundle's schema (a method it does not declare, say) is a denial too, audited with the reason `misfit`.
 
 ## The bundle

@@ -3,11 +3,23 @@
 # `session check --site examples/site.yaml` validates it.
 site: docs
 host: docs.example.com
-issuer: https://issuer.example.com/realms/docs
-client:
-  id: session-docs
-  auth: private_key_jwt        # the key is the key port's purpose client-assertion; which driver holds it is a start-up setting
-scopes: [openid, profile, email]
+issuers:                       # one or more (decision 0034); with several, /_session/signin shows one link for each
+  - id: corp                   # ?issuer=corp of the sign-in paths; lower-case letters, digits and '-'
+    label: Example Corp        # the sign-in page shows "Sign in with Example Corp"
+    issuer: https://issuer.example.com/realms/corp-staff
+    client:
+      id: session-docs
+      auth: private_key_jwt    # the key is the key port's purpose client-assertion, one key for every issuer; which driver holds it is a start-up setting
+    scopes: [openid, profile, email]
+  - id: partner
+    label: Example Partner
+    issuer: https://issuer.example.com/realms/partner-staff
+    client:
+      id: session-docs
+      auth: private_key_jwt
+    scopes: [openid, profile, email]
+# signin:
+#   remember_choice: 720h      # optional: remember the issuer a person picked for that long; unset remembers nothing
 session:
   idle: 30m
   max: 8h

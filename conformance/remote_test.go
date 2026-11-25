@@ -33,7 +33,9 @@ import (
 // remoteConfig is what the remote runner is told, from the environment that `just test-remote` sets (decision 0029).
 type remoteConfig struct {
 	host     string // SESSION_REMOTE_HOST: the site's host, as the browser uses it (with a port when it is not 443)
-	issuer   string // SESSION_REMOTE_ISSUER: the realm's issuer; the site file's when empty
+	issuerID string // SESSION_REMOTE_ISSUER: the id of the site file's issuer to sign in through; the only one when empty
+	issuer   string // that issuer's identifier, from the site file
+	several  bool   // the site file has several issuers: the runner skips the sign-in page with ?issuer=
 	siteFile string // SESSION_REMOTE_SITE_FILE: the site file the site runs; remote/site.yaml when empty
 	idp      string // SESSION_REMOTE_IDP: the alias of the brokered identity provider, sent as kc_idp_hint
 	hint     string // SESSION_REMOTE_HINT: the test identity, sent as login_hint and chosen at mimic's chooser
@@ -51,7 +53,7 @@ type remoteConfig struct {
 func remoteFromEnv(t *testing.T) remoteConfig {
 	t.Helper()
 	c := remoteConfig{
-		host: os.Getenv("SESSION_REMOTE_HOST"), issuer: os.Getenv("SESSION_REMOTE_ISSUER"),
+		host: os.Getenv("SESSION_REMOTE_HOST"), issuerID: os.Getenv("SESSION_REMOTE_ISSUER"),
 		siteFile: os.Getenv("SESSION_REMOTE_SITE_FILE"), idp: os.Getenv("SESSION_REMOTE_IDP"),
 		hint: os.Getenv("SESSION_REMOTE_HINT"), email: os.Getenv("SESSION_REMOTE_EMAIL"), ca: os.Getenv("SESSION_REMOTE_CA"),
 		resolve: os.Getenv("SESSION_REMOTE_RESOLVE"), proxy: os.Getenv("SESSION_REMOTE_PROXY"),
@@ -95,10 +97,18 @@ func TestRemote(t *testing.T) {
 		t.Fatal(err)
 	}
 	rules = rules.WithDefaults()
-	if c.issuer == "" {
-		c.issuer = sf.Issuer
+	// The issuer to sign in through (decision 0034): ISSUER names it by its id; a site file of one issuer needs no ISSUER.
+	var ids []string
+	for _, is := range sf.Issuers {
+		ids = append(ids, is.ID)
+		if is.ID == c.issuerID || (c.issuerID == "" && len(sf.Issuers) == 1) {
+			c.issuerID, c.issuer = is.ID, strings.TrimSuffix(is.Issuer, "/")
+		}
 	}
-	c.issuer = strings.TrimSuffix(c.issuer, "/")
+	if c.issuer == "" {
+		t.Fatalf("SESSION_REMOTE_ISSUER %q: the id of one of the site file's issuers %v", c.issuerID, ids)
+	}
+	c.several = len(sf.Issuers) > 1
 	var paths []badPath
 	switch c.proxy {
 	case "envoy":
@@ -229,10 +239,12 @@ func remoteRaw(client *http.Client, origin, method, path, host string) (answer, 
 // interceptSignIn pauses every request of the tab to the issuer's authorization endpoint, counts it, and adds kc_idp_hint and
 // login_hint when the runner has them, so Keycloak sends the browser straight to the brokered provider and names the test
 // identity there. session's own sign-in request is left as session built it otherwise: the hints are the runner's, not the
-// site's.
+// site's. On a site of several issuers it also adds ?issuer=<ISSUER> to the site's sign-in page, which then sends the browser on
+// to that issuer's sign-in at once, as a person's click on its link would (decision 0034).
 func interceptSignIn(t *testing.T, b *tab, c remoteConfig, auths *atomic.Int64) {
 	t.Helper()
 	endpoint := c.issuer + "/protocol/openid-connect/auth"
+	page := "https://" + c.host + core.PathSignIn
 	// The listener runs in the tab's reading loop and must not send a command: the pauses go to a goroutine that answers them.
 	paused := make(chan *fetch.EventRequestPaused, 64)
 	err := chromedp.Listen(b.ctx, func(ev any) {
@@ -250,6 +262,14 @@ func interceptSignIn(t *testing.T, b *tab, c remoteConfig, auths *atomic.Int64) 
 				return
 			case e := <-paused:
 				p := fetch.ContinueRequestParams{RequestID: e.RequestID}
+				if u, err := url.Parse(e.Request.URL); err == nil && c.several && strings.HasPrefix(e.Request.URL, page) {
+					q := u.Query()
+					if q.Get("issuer") == "" {
+						q.Set("issuer", c.issuerID)
+					}
+					u.RawQuery = q.Encode()
+					p.URL = u.String()
+				}
 				if u, err := url.Parse(e.Request.URL); err == nil && strings.HasPrefix(e.Request.URL, endpoint) {
 					auths.Add(1)
 					q := u.Query()
@@ -266,8 +286,11 @@ func interceptSignIn(t *testing.T, b *tab, c remoteConfig, auths *atomic.Int64) 
 			}
 		}
 	}()
-	if _, err := chromedp.Call(b.ctx, fetch.Enable, fetch.EnableParams{Patterns: []*fetch.RequestPattern{
-		{URLPattern: endpoint + "*", RequestStage: fetch.RequestStageRequest}}}); err != nil {
+	patterns := []*fetch.RequestPattern{{URLPattern: endpoint + "*", RequestStage: fetch.RequestStageRequest}}
+	if c.several {
+		patterns = append(patterns, &fetch.RequestPattern{URLPattern: page + "*", RequestStage: fetch.RequestStageRequest})
+	}
+	if _, err := chromedp.Call(b.ctx, fetch.Enable, fetch.EnableParams{Patterns: patterns}); err != nil {
 		t.Fatal(err)
 	}
 }

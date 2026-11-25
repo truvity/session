@@ -120,7 +120,7 @@ There is no S7. The ids are the ones the conformance suite cites.
 | Field | Content |
 | --- | --- |
 | id | 256 random bits, only in the cookie. The store key is a keyed hash of it, so a store leak gives no usable cookie |
-| subject, issuer, `sid` | From the ID token. Pointer items for back-channel logout hold the session keys under `sid` and subject (section 8) |
+| subject, issuer, `sid` | From the ID token. The issuer is the session's own: on a site of several issuers, everything after the sign-in goes to it ([0034](decisions/0034-several-issuers-per-site.md)). Index entries for back-channel logout hold the session keys under `sid` and subject (section 8) |
 | tokens | The sign-in access token and refresh token |
 | exchanged tokens | Not in the record: one item for each audience under the session's store key, see section 7 |
 | created, last seen, expires | Idle and maximum lifetime. `created` is in milliseconds, for the logout comparison (section 8) |
@@ -138,7 +138,8 @@ Idle time is refreshed at most once a minute, to keep writes down. The default l
 
 | Path | Method | Purpose |
 | --- | --- | --- |
-| `/_session/login` | GET | Start sign-in. `return_to` must be a relative path of the same site |
+| `/_session/login` | GET | Start sign-in. `return_to` must be a relative path of the same site. `issuer=<id>` names the issuer; a site of several issuers without it (and without a remembered choice) sends the browser to `/_session/signin` ([0034](decisions/0034-several-issuers-per-site.md)) |
+| `/_session/signin` | GET | The sign-in page of a site of several issuers: one link for each, "Sign in with \<label\>", no script. `issuer=<id>` skips it. A site of one issuer has no page: it goes to the login at once |
 | `/_session/callback` | GET | Receive the code from the issuer |
 | `/_session/logout` | POST | End the session. Needs CSRF headers. Answers `200 {"logout_url"}` to a request that accepts JSON, else `303` to the issuer's end-session ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)) |
 | `/_session/backchannel-logout` | POST | Called by the issuer |
@@ -181,7 +182,8 @@ Notes:
 
 - The sign-in transaction is short-lived (a few minutes) and used once.
 - A short-lived binding cookie ties the transaction to the browser that started it.
-- The callback checks the `iss` parameter (RFC 9207) against the configured issuer.
+- The callback checks the `iss` parameter (RFC 9207) against the issuer the sign-in was started at.
+- A site may have several issuers ([0034](decisions/0034-several-issuers-per-site.md)). The person picks one on `/_session/signin` (or the browser comes with `?issuer=<id>`, or the site remembers the choice in a cookie when `signin.remember_choice` is set); the transaction records the issuer, and PAR, the code's redemption and the ID token's checks are that issuer's, with the site's client there. A callback whose `iss` names another issuer is refused: the mix-up defence. Where an issuer sends no `iss`, the state binds the response to the issuer chosen.
 - `return_to` is stored in the transaction, never taken from the callback URL.
 - PAR keeps the request parameters off the browser's URL bar. `private_key_jwt` means the service holds no shared secret.
 
@@ -226,12 +228,13 @@ Rules:
 - Forwarding the session token itself is not offered, because one token would be valid on every API.
 - The audience of a route of mode `exchange` is one the site's issuer allows ([0026](decisions/0026-exchange-targets-what-the-issuer-allows.md)). With sluis v2 as the issuer, that is a resource client only (an AWS role, Kubernetes, a database, SSH, a vendor minter, KV), never a product API: sluis's exchange issues tokens for resource clients only, and a product API takes the group identity provider's tokens. A product API behind session gets the person through the identity header, or through an exchange at an issuer that allows it, such as Keycloak. session does not refuse such an audience at start, because the site file does not say which kind of client it is; sluis refuses the exchange, and the route answers 403.
 - On the API Gateway HTTP API the token travels in `X-Session-Token`, because `Authorization` is reserved there.
+- On a site of several issuers the exchange and the refresh go to the session's own issuer, with the site's client and an assertion for that issuer ([0034](decisions/0034-several-issuers-per-site.md)). A route whose audience only one issuer allows answers a session of another issuer with that issuer's refusal, a 403, and the session stays; a site that wants a clean denial instead writes a policy on `principal.issuer` for the route, which runs before the exchange. The route table names no issuer.
 
-The records are [0005](decisions/0005-tokens-per-api-and-issuers.md), for the choices of the build [0016](decisions/0016-exchange-client-and-identity-header.md), and for what each issuer allows as an audience [0026](decisions/0026-exchange-targets-what-the-issuer-allows.md).
+The records are [0005](decisions/0005-tokens-per-api-and-issuers.md), for the choices of the build [0016](decisions/0016-exchange-client-and-identity-header.md), for what each issuer allows as an audience [0026](decisions/0026-exchange-targets-what-the-issuer-allows.md), and for a site of several issuers [0034](decisions/0034-several-issuers-per-site.md).
 
 ## 8. Logout
 
-The person's own logout is simple: a POST with CSRF headers deletes the session, revokes its refresh token at the issuer when the issuer has a revocation endpoint (best effort, a failure counted), clears session's two cookies and sends the browser to the issuer's end-session, also when there was no live session (with `id_token_hint` only when there was): as JSON `{"logout_url"}` for the browser helper's `fetch`, as a `303` otherwise ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md), [0031](decisions/0031-logout-across-hosts.md)). What each host does at a logout is in 0031.
+The person's own logout is simple: a POST with CSRF headers deletes the session, revokes its refresh token at the issuer when the issuer has a revocation endpoint (best effort, a failure counted), clears session's two cookies and sends the browser to the issuer's end-session, also when there was no live session (with `id_token_hint` only when there was): as JSON `{"logout_url"}` for the browser helper's `fetch`, as a `303` otherwise ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md), [0031](decisions/0031-logout-across-hosts.md)). What each host does at a logout is in 0031. On a site of several issuers the end-session and the revocation are the session's own issuer's; without a live session it is the remembered choice's issuer, or, when the site remembers none, the browser goes back to the site ([0034](decisions/0034-several-issuers-per-site.md)).
 
 Logout started at the issuer arrives by back-channel logout. The issuer posts to any replica. All replicas share the store, so deleting there is enough.
 
@@ -266,6 +269,7 @@ Design consequences ([0010](decisions/0010-logout-pointer-items.md), [0031](deci
 - One race is left: a logout that arrives before the sign-in has finished. The callback closes it with one tombstone read at session creation, never on each check. If a tombstone newer than the start of the sign-in exists, the callback ends the session it just made.
 - Tombstones are written by every back-channel logout, by `sid`, or by subject when the token has no `sid`. They live as long as the maximum session lifetime.
 - The `jti` of a logout token is stored until the token expires, so a replay is refused.
+- On a site of several issuers there is still one back-channel path. A token is verified by the issuer its `iss` names, among the site's only, and its `sid` or subject ends only that issuer's sessions: the index entries, tombstones and `jti` are keyed by issuer ([0034](decisions/0034-several-issuers-per-site.md)).
 
 ## 9. Built on atoom: ports, blocks, policy, audit
 
@@ -326,17 +330,26 @@ The emitter of `truvity/audit` runs in session's process behind `core.Auditor` (
 
 ## 10. Site configuration
 
-One file per site. The schema is part of the repository, and `session check` validates it (the generator turns it into proxy config). The example shows the planned shape. The schema is the contract once it exists.
+One file per site. The schema is part of the repository, and `session check` validates it (the generator turns it into proxy config). The example shows the shape `internal/site` reads; [examples/site.yaml](../examples/site.yaml) is the full example.
 
 ```yaml
-site: docs
-host: docs.example.com
-issuer: https://issuer.example.com
-client:
-  id: session-docs
-  auth: private_key_jwt
-  key: { driver: software, file: /run/secrets/docs-client-key.pem }
-scopes: [openid, profile, groups]
+site: tools
+host: tools.example.com
+issuers:
+  - id: corp
+    label: Example Corp
+    issuer: https://issuer.example.com/realms/corp-staff
+    client:
+      id: session-tools
+      auth: private_key_jwt
+    scopes: [openid, profile, email]
+  - id: partner
+    label: Example Partner
+    issuer: https://issuer.example.com/realms/partner-staff
+    client: { id: session-tools, auth: private_key_jwt }
+    scopes: [openid, profile, email]
+signin:
+  remember_choice: 720h
 session:
   idle: 30m
   max: 8h
@@ -364,7 +377,8 @@ routes:
 
 | Section | Content |
 | --- | --- |
-| `client` | The issuer client, and where its key lives (a key driver) |
+| `issuers` | One issuer or more ([0034](decisions/0034-several-issuers-per-site.md)). Each has an `id` (1 to 32 lower-case letters, digits and `-`, unique: `?issuer=<id>`), a `label` (the sign-in page's "Sign in with \<label\>"), the issuer identifier `issuer` (an `https` URL, unique; its discovery is read at start and must offer PAR), its `client` (`id`, and `auth: private_key_jwt`; the key is the key port's purpose `client-assertion`, one key for every issuer, held by a start-up key driver) and its `scopes` (with `openid`). With one issuer there is no sign-in page. The top-level `issuer`, `client` and `scopes` of before are refused |
+| `signin` | `remember_choice`: a duration, off when unset. When set on a site of several issuers, the issuer a person signed in with is kept in the cookie `__Host-<site>-issuer` for that long, and a login that names no issuer goes to it without the page |
 | `session` | The idle and the maximum lifetime |
 | `policy` | The name of the signed bundle (a document of the source port) and the one key that verifies it: its `kid` and its P-384 public key as PEM. Without a bundle, the route table decides alone |
 | `routes` | The route table |
@@ -425,6 +439,7 @@ The full model goes into `docs/threat-model.md` with the first code.
 | Session fixation | New id at sign-in |
 | Open redirect | `return_to` must be a relative path, kept server-side |
 | Login CSRF and code injection | State plus binding cookie, PKCE, `iss` check |
+| Mix-up between the issuers of one site | The transaction records the issuer chosen; the callback refuses an `iss` of another issuer, redeems the code at the chosen issuer only, with an assertion for it, and takes only its ID token. A back-channel logout token ends only its own issuer's sessions ([0034](decisions/0034-several-issuers-per-site.md)) |
 | Header spoofing | The host strips browser headers, the allow answer sets them (S8). The examples ship this |
 | Path confusion between proxy and check | Both use the normalised path. Reproduced in the first spike on nginx with `$request_uri`. The conformance suite sends dot-segment, encoded-dot and merged-slash paths to every host, and the examples ship Envoy `normalize_path`, `merge_slashes` and `path_with_escaped_slashes_action`, and nginx `$uri$is_args$args` (read in the protected location, not the subrequest's) with dot segments and encoded dots, slashes and backslashes refused, because nginx passes the site the raw URI ([0018](decisions/0018-nginx-adapter.md)) |
 | Replay of logout tokens | `jti` stored until the token expires |
@@ -439,7 +454,7 @@ The full model goes into `docs/threat-model.md` with the first code.
 
 ## 14. Testing
 
-The conformance suite (`conformance/`, `just test-conformance`, [0020](decisions/0020-conformance-suite.md)) drives a real headless browser (Chromium's headless shell, through chromedp) through the real flows, with each host in turn: Envoy over gRPC, Envoy over HTTP and nginx, each running its example configuration as it is, against a test Keycloak. The steps are the same on every host: a public route and the JSON 401 without a session; the sign-in redirect, Keycloak's form and the callback, with the S1 cookie read from the browser; a protected route with header stripping (S8); the sign-in prefix without a check; CSRF with and without the header (S5); the exchange and identity-header routes, verified against the realm and `/_session/jwks`; a refused exchange; a store outage (503); the dot-segment, encoded-dot, encoded-slash and merged-slash paths; the logout and Keycloak's end-session (S6); back-channel logout; and a refresh refused after a logout the issuer did not send. Where the hosts differ by design (a 503 without its body in Envoy's HTTP mode, nginx's 400 on a bad path and its single `Set-Cookie`), the suite asserts each host's answer. The browser is on TLS, because the cookie is `Secure` and the CSRF rule wants an `https` origin; the bad paths are sent outside the browser, which would normalise them.
+The conformance suite (`conformance/`, `just test-conformance`, [0020](decisions/0020-conformance-suite.md)) drives a real headless browser (Chromium's headless shell, through chromedp) through the real flows, with each host in turn: Envoy over gRPC, Envoy over HTTP and nginx, each running its example configuration as it is, against a test Keycloak. The steps are the same on every host: a public route and the JSON 401 without a session; the sign-in redirect, Keycloak's form and the callback, with the S1 cookie read from the browser; a protected route with header stripping (S8); the sign-in prefix without a check; CSRF with and without the header (S5); the exchange and identity-header routes, verified against the realm and `/_session/jwks`; a refused exchange; a store outage (503); the dot-segment, encoded-dot, encoded-slash and merged-slash paths; the logout and Keycloak's end-session (S6); back-channel logout; and a refresh refused after a logout the issuer did not send. A second stand has two issuers, two realms of the test Keycloak, and runs through Envoy over gRPC: the sign-in page, `?issuer=`, a sign-in through each, a mix-up refused, a policy by issuer, the exchange at the session's issuer, and logout and back-channel logout through the right issuer ([0034](decisions/0034-several-issuers-per-site.md)). Where the hosts differ by design (a 503 without its body in Envoy's HTTP mode, nginx's 400 on a bad path and its single `Set-Cookie`), the suite asserts each host's answer. The browser is on TLS, because the cookie is `Secure` and the CSRF rule wants an `https` origin; the bad paths are sent outside the browser, which would normalise them.
 
 Not yet in the suite: the API Gateway authorizer (step 5, in a real account), a test sluis (step 6), back-channel logout across two replicas, session expiry in the browser, and policy decisions, which session's own tests check through atoom's loader (atoom's decision test set holds `cedar-go` to `cedar-policy`). The suite also carries the Keycloak findings of the group SSO reference stand ([0013](decisions/0013-reference-stand.md)) that are built: a redirect only on a navigation, and `id_token_hint` at logout.
 
@@ -478,6 +493,7 @@ Not yet in the suite: the API Gateway authorizer (step 5, in a real account), a 
 | The Lambda handlers, the choices of step 5 before atoom's B9 | [0030](decisions/0030-lambda-handlers-step-5-choices.md) |
 | Logout across hosts: end-session, back-channel logout, the lookup, cookies and audit | [0031](decisions/0031-logout-across-hosts.md) |
 | atoom 0.8.0: the audit transports NATS and SQS, and the AppConfig source | [0032](decisions/0032-atoom-0.8.0-transports-and-the-appconfig-source.md) |
+| Several issuers per site: the sign-in page, a flow per issuer, the session's own issuer for everything after | [0034](decisions/0034-several-issuers-per-site.md) |
 
 ## 16. Status and next steps
 
@@ -502,6 +518,7 @@ Planned, in order:
    - **The image** (built, [0028](decisions/0028-the-image.md)): `ghcr.io/truvity/session`, `master-<commit>` from `master` and `X.Y.Z` from a tag.
    - **The remote runner** (built, [0029](decisions/0029-the-remote-runner.md)): `just test-remote HOST=...` runs the scenarios that need no movable clock, no store double and no admin API against the deployed site, signing in through the brokered upstream (mimic on development, by `kc_idp_hint` and `login_hint`), with the site file `conformance/remote/site.yaml` whose short lifetimes let the idle and absolute expiry run in real time. The site routes to the test backend `ghcr.io/truvity/session-echo`. Audit is checked only when a reader of the spool is given. An agent runs it from a workstation first; CI later.
    - **atoom 0.8.0** (built, [0032](decisions/0032-atoom-0.8.0-transports-and-the-appconfig-source.md)): every atoom pin at 0.8.0. The first sites keep `--audit-socket` to the spool sidecar; `--audit-nats`, atoom's Go `transport/nats` in the process with the host's connection and credentials (`--audit-nats-stream`, `--audit-nats-subject`, `--audit-nats-creds`, `--audit-nats-token-file`, `--audit-nats-tls-ca`), is a fourth audit switch for a site whose writer reads a JetStream stream (D65 A), tested against a NATS server with JetStream in CI. Still no key rotation at the first sites: the token block's rotation ring (atoom's B8b) is not adopted, and is the next step before the first site that rotates a signing key.
+   - **Several issuers per site** (built, [0034](decisions/0034-several-issuers-per-site.md), D84 A): the site file's `issuers` list (breaking: the top-level `issuer`, `client` and `scopes` are gone), the sign-in page `/_session/signin` with one link for each issuer and `?issuer=<id>` to skip it, the remembered choice as `signin.remember_choice` (off by default), a PAR and PKCE flow per issuer with the callback bound to the issuer chosen (RFC 9207 `iss`, else the state), and the session's issuer for the exchange, the refresh, the end-session and back-channel logout. The first site is an internal tool that the staff of every vendor sign in to, each vendor's staff realm an issuer of its own (D83). Tested with two Keycloak realms in the conformance suite; the remote runner's `ISSUER=` names the issuer by its id.
 5. **Lambda:** the sign-in handler behind the Web Adapter and the authorizer as a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)), HTTP API first, then REST API. The real-AWS check runs the conformance scenarios through API Gateway ([0020](decisions/0020-conformance-suite.md)). It depended on atoom's B9 ([0025](decisions/0025-first-version-for-the-first-sites.md)), released in atoom 0.8.0: a Go `transport/sqs` driver mounted in the process for audit, because Lambda has no spool sidecar, and the Go `source/appconfig` driver for the site file and the policy bundle ([0030](decisions/0030-lambda-handlers-step-5-choices.md)).
    - **The handlers** (built, [0030](decisions/0030-lambda-handlers-step-5-choices.md)): `session authorizer`, the native handler of both API Gateway products in `internal/apigateway`, with the answers, the context keys and the integration's parameter mapping; the sign-in function is `session serve --check-grpc ''` behind the Web Adapter, with no code of its own. Unit-tested in the process on the fit spike's sample events, with audit through the in-process transport driver.
    - **atoom's B9** (built, [0032](decisions/0032-atoom-0.8.0-transports-and-the-appconfig-source.md)): `--audit-sqs QUEUE_URL`, atoom's Go `transport/sqs` in the process on a FIFO queue (D44 A), and `--source-appconfig APP/ENV/PROFILE`, atoom's Go `source/appconfig` in the process (D71 A), the site file the profile `PROFILE` and every other document the profile of its name. Exactly one of the four audit switches, and exactly one of `--config-dir` and `--source-appconfig`. Next: the packaging under `lambda/` and the real-AWS run.
