@@ -29,6 +29,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0022](0022-atoom-token-block.md) | atoom's token block: the choices of the move to atoom 0.6.0 |
 | [0023](0023-audit-emitter.md) | The emitter of truvity/audit: the choices of the switch from the stand-in |
 | [0024](0024-audit-transport-is-an-explicit-switch.md) | The audit transport is an explicit switch, not a value of `--environment` (partly supersedes 0023) |
+| [0025](0025-first-version-for-the-first-sites.md) | The first version for the first sites: step 4, and what step 5 waits for |
 
 ## How the records are kept
 
