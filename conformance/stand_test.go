@@ -239,7 +239,7 @@ func newStand(t *testing.T, kc *kctest.Keycloak, cfgs ...standConfig) *stand {
 	}
 	// Each issuer is a realm of its own, with the same client id and the same client key: the site has one key for every issuer.
 	exchanges := map[string]core.Issuer{}
-	var issuerURLs []string
+	var issuerURLs []core.SiteIssuer
 	var signIns []signin.Issuer
 	for i := range st.issuers {
 		is := &st.issuers[i]
@@ -255,7 +255,7 @@ func newStand(t *testing.T, kc *kctest.Keycloak, cfgs ...standConfig) *stand {
 			t.Fatal(err)
 		}
 		exchanges[is.issuer] = ex
-		issuerURLs = append(issuerURLs, is.issuer)
+		issuerURLs = append(issuerURLs, core.SiteIssuer{ID: is.id, Identifier: is.issuer})
 		signIns = append(signIns, signin.Issuer{ID: is.id, Label: is.label, URL: is.issuer, ClientID: "session-docs",
 			Scopes: []string{"openid", "profile", "email"}})
 	}
@@ -312,7 +312,8 @@ func newStand(t *testing.T, kc *kctest.Keycloak, cfgs ...standConfig) *stand {
 // proxy's plain listener.
 func (st *stand) target(h host) *target {
 	return &target{
-		origin: st.origin, issuer: st.issuer, cookieName: st.core.CookieName(), email: st.person.Email, ctx: context.Background(),
+		origin: st.origin, issuer: st.issuer, cookieName: st.core.CookieName(), email: st.person.Email, idp: st.issuers[0].id,
+		ctx:          context.Background(),
 		signIn:       func(t *testing.T, b *tab) { b.signIn(t, st.issuer, st.person) },
 		leftToSignIn: func(t *testing.T, b *tab) bool { return b.atLoginForm(t, st.issuer) },
 		raw:          func(method, path string) (answer, error) { return raw(st.proxy, method, path, st.host) },

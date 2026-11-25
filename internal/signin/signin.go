@@ -657,7 +657,7 @@ func jwtType(raw string) (string, bool) {
 	return t, true
 }
 
-// Whoami answers the person's subject, name, groups and when the session ends. It reads the session itself, from the cookie:
+// Whoami answers the person's issuer id (idp, decision 0035), subject, name, groups and when the session ends. It reads the session itself, from the cookie:
 // the paths of session are routed without a check.
 func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 	id, _ := h.core.SplitCookies(r.Header)
@@ -678,7 +678,12 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 	if groups == nil {
 		groups = []string{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sub": s.Subject, "name": s.Claims.Name, "email": s.Claims.Email,
+	// idp is the site's id of the session's issuer (decision 0035): a person is idp and sub.
+	idp := ""
+	if is := h.byURL[s.Issuer]; is != nil {
+		idp = is.ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"idp": idp, "sub": s.Subject, "name": s.Claims.Name, "email": s.Claims.Email,
 		"groups": groups, "expires_at": ends.UTC().Format(time.RFC3339)})
 }
 

@@ -52,10 +52,10 @@ func newIssuersSite(t *testing.T, remember time.Duration, fakes ...*fakeIssuer) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var urls []string
+	var urls []core.SiteIssuer
 	var issuers []signin.Issuer
 	for i, f := range fakes {
-		urls = append(urls, f.srv.URL)
+		urls = append(urls, core.SiteIssuer{ID: issuerIDs[i], Identifier: f.srv.URL})
 		issuers = append(issuers, signin.Issuer{ID: issuerIDs[i], Label: []string{"Example <Corp> & Co", "Example Partner"}[i],
 			URL: f.srv.URL, ClientID: "session-" + issuerIDs[i], Scopes: []string{"openid", issuerIDs[i]}})
 	}
@@ -263,6 +263,20 @@ func TestLogoutGoesThroughTheSessionsIssuer(t *testing.T) {
 	if target := s.logout(t, s.core.ChoiceCookieName()+"=corp"); !strings.HasPrefix(target, corp.srv.URL+"/logout?") ||
 		strings.Contains(target, "id_token_hint") {
 		t.Fatalf("no session, the remembered issuer: %q", target)
+	}
+}
+
+// whoami names the session's issuer by its id in the site (decision 0035).
+func TestWhoamiNamesTheIssuer(t *testing.T) {
+	s := newIssuersSite(t, 0, twoFakes(t)...)
+	id, err := s.core.Create(context.Background(), &core.Record{Subject: "bob", Issuer: s.fakes[1].srv.URL, SID: "sid-1"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := s.get(core.PathWhoami, s.core.CookieName()+"="+id)
+	var who map[string]any
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &who) != nil || who["idp"] != "partner" || who["sub"] != "bob" {
+		t.Fatalf("whoami %d %s", w.Code, w.Body.String())
 	}
 }
 
