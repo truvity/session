@@ -5,6 +5,15 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### atoom 0.8.0: the audit transports NATS and SQS, and the AppConfig source
+
+- **Every atoom module at 0.8.0** ([0032](docs/decisions/0032-atoom-0.8.0-transports-and-the-appconfig-source.md)); `go.mod` adds atoom's `transport/nats`, `transport/sqs` and `source/appconfig`. `spike/` keeps its pins. The token block's rotation ring (atoom's B8b) is not adopted: the first sites rotate no signing key ([0025](docs/decisions/0025-first-version-for-the-first-sites.md)); it is the next step.
+- New: `--audit-nats URL`, atoom's Go NATS JetStream transport driver in the process (D65 A), with `--audit-nats-stream`, `--audit-nats-subject` (required), `--audit-nats-creds` or `--audit-nats-token-file`, and `--audit-nats-tls-ca`. The stream is the deployment's; session only publishes, and JetStream drops a retry by the message's uid.
+- New: `--audit-sqs QUEUE_URL`, atoom's Go SQS transport driver in the process on a FIFO queue, the audit switch of a Lambda function (D44 A).
+- The audit transport is exactly one of `--audit-socket`, `--audit-nats`, `--audit-sqs` and `--audit-stdout`; none or several are refused at start, and so is a `--audit-nats-*` setting without `--audit-nats`. The message for none changed: "an audit transport is required".
+- New: `--source-appconfig APP/ENV/PROFILE`, atoom's Go AWS AppConfig source driver in the process (D71 A): the site file is the profile `PROFILE`, every other document the profile of its name. Exactly one of `--config-dir` and `--source-appconfig`; the message for none is "--config-dir or --source-appconfig is required".
+- New: `just test-nats`, `--audit-nats` against a NATS server with JetStream in a container, in the CI job of the containers: a sign-in's record lands once.
+
 ### Logout across hosts
 
 - **The back-channel logout lookup uses atoom's index entries** ([0031](docs/decisions/0031-logout-across-hosts.md)), in place of the pointer items of [0010](docs/decisions/0010-logout-pointer-items.md): each session item carries the entries `sid` and `sub` (keyed hashes of the issuer and the value), resent by every put of it, the idle refresh and the write of refreshed tokens included; a back-channel logout finds the sessions with a linearizable `Query` by entry. A sign-in no longer reads or rewrites a shared item, so parallel sign-ins of one subject never retry. No migration: nothing is deployed.

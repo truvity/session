@@ -10,27 +10,33 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.20
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.2
+	github.com/aws/aws-sdk-go-v2/service/appconfigdata v1.32.11
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.74.1
 	github.com/aws/aws-sdk-go-v2/service/kms v1.63.0
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.53.0
 	github.com/cedar-policy/cedar-go v1.9.3
 	github.com/chromedp/cdproto v0.159.0
 	github.com/chromedp/chromedp v0.22.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	github.com/go-jose/go-jose/v4 v4.1.9
-	github.com/truvity/atoom/blocks/seal v0.7.0
-	github.com/truvity/atoom/blocks/token v0.7.0
-	github.com/truvity/atoom/common v0.7.0
-	github.com/truvity/atoom/key v0.7.0
-	github.com/truvity/atoom/key/awskms v0.7.0
-	github.com/truvity/atoom/key/software v0.7.0
-	github.com/truvity/atoom/policy v0.7.0
-	github.com/truvity/atoom/socket v0.7.0
-	github.com/truvity/atoom/source v0.7.0
-	github.com/truvity/atoom/source/file v0.7.0
-	github.com/truvity/atoom/store v0.7.0
-	github.com/truvity/atoom/store/dynamodb v0.7.0
-	github.com/truvity/atoom/transport v0.7.0
+	github.com/nats-io/nats.go v1.55.0
+	github.com/truvity/atoom/blocks/seal v0.8.0
+	github.com/truvity/atoom/blocks/token v0.8.0
+	github.com/truvity/atoom/common v0.8.0
+	github.com/truvity/atoom/key v0.8.0
+	github.com/truvity/atoom/key/awskms v0.8.0
+	github.com/truvity/atoom/key/software v0.8.0
+	github.com/truvity/atoom/policy v0.8.0
+	github.com/truvity/atoom/socket v0.8.0
+	github.com/truvity/atoom/source v0.8.0
+	github.com/truvity/atoom/source/appconfig v0.8.0
+	github.com/truvity/atoom/source/file v0.8.0
+	github.com/truvity/atoom/store v0.8.0
+	github.com/truvity/atoom/store/dynamodb v0.8.0
+	github.com/truvity/atoom/transport v0.8.0
+	github.com/truvity/atoom/transport/nats v0.8.0
+	github.com/truvity/atoom/transport/sqs v0.8.0
 	github.com/truvity/audit/emitter v0.19.0
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/oauth2 v0.38.0
@@ -56,8 +62,12 @@ require (
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/go-json-experiment/json v1.27.2 // indirect
 	github.com/gowebpki/jcs v1.0.2 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
+	github.com/nats-io/nkeys v0.4.16 // indirect
+	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20220921023135-46d9e7742f1e // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect

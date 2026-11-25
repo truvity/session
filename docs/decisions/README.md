@@ -36,6 +36,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0029](0029-the-remote-runner.md) | The remote runner: the conformance scenarios against a deployed site, and the echo test backend |
 | [0030](0030-lambda-handlers-step-5-choices.md) | The Lambda handlers: the choices of step 5 before atoom's B9 |
 | [0031](0031-logout-across-hosts.md) | Logout across hosts: end-session, back-channel logout, the lookup, cookies and audit (partly supersedes 0010) |
+| [0032](0032-atoom-0.8.0-transports-and-the-appconfig-source.md) | atoom 0.8.0: the audit transports NATS and SQS, and the AppConfig source |
 
 ## How the records are kept
 

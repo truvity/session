@@ -5,7 +5,8 @@
 // billing records; there is no such action.
 //
 // The transport is a client of the port: the emit socket of a transport driver (Socket), to the audit writer of the environment,
-// or, for a run without one, Lines, a driver in this process that writes each record as one JSON line.
+// or a transport driver mounted in this process: atoom's transport/nats (NATS) or transport/sqs (SQS), or, for a run without a
+// writer, Lines, which writes each record as one JSON line.
 package audit
 
 import (

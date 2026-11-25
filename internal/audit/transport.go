@@ -12,8 +12,6 @@ import (
 	"github.com/truvity/atoom/socket"
 	transportv1 "github.com/truvity/atoom/transport/gen/atoom/transport/v1alpha1"
 	"github.com/truvity/atoom/transport/gen/atoom/transport/v1alpha1/transportv1alpha1connect"
-
-	"github.com/truvity/session/internal/atoomx"
 )
 
 // Socket is the client of a transport driver that serves the emit side of the port on the UNIX socket at path (atoom's
@@ -54,7 +52,5 @@ func (l *Lines) Emit(_ context.Context, req *connect.Request[transportv1.EmitReq
 
 // Mount mounts the driver in this process and returns its client and the function that stops it.
 func (l *Lines) Mount() (transportv1alpha1connect.TransportServiceClient, func()) {
-	path, h := transportv1alpha1connect.NewTransportServiceHandler(l)
-	hc, stop := atoomx.Mount(path, h)
-	return transportv1alpha1connect.NewTransportServiceClient(hc, "http://transport", call.ClientOptions()...), stop
+	return mount(transportv1alpha1connect.NewTransportServiceHandler(l))
 }
