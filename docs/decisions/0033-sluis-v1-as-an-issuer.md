@@ -11,7 +11,7 @@ The owner decided (D92 A) that session supports sluis v1 as an issuer now, so th
 
 [0005](0005-tokens-per-api-and-issuers.md) found, in sluis v1.85.0, that v1 has no PAR and no `private_key_jwt`, and that its token exchange takes a sign-in token only from a `public` client. This record reads sluis v1.87.1 (branch `master`, read 2026-11-25) again, against everything session asks of an issuer today, and lists what is missing.
 
-The multi-issuer work (D84) is record 0034, in its own pull request. On `master` a site file names one issuer. Each choice below is a property of the site's issuer: under 0034, each per-issuer entry carries its own `par` and its own scopes.
+The multi-issuer work (D84) is [0034](0034-several-issuers-per-site.md): a site file lists its issuers under `issuers`, each entry with its own `client` and `scopes`. Each choice below is a property of one issuer, so it is set in that issuer's entry: `par` in its `client`, `offline_access` in its `scopes`.
 
 ### What session asks of an issuer today
 
@@ -76,10 +76,10 @@ The OpenID provider is the zitadel-oidc `op` package v3.51.16, vendored under `t
 
 | Option | Pros | Cons |
 | --- | --- | --- |
-| **(a) `client.par: unavailable` in the site file** (default `required`): session sends the authorization request on the browser's URL (`response_type`, `client_id`, `redirect_uri`, `scope`, `state`, `nonce`, `code_challenge`, `code_challenge_method`), and starts only when the issuer's discovery has **no** PAR endpoint, so the setting can never turn PAR off at an issuer that has it | No sluis v1 change; the protections that stop a forged or replayed callback stay: the binding cookie, `state` used once, `nonce`, PKCE S256, the exact redirect URI, the RFC 9207 `iss` check, the code redeemed with `private_key_jwt` | The request's parameters are on the URL bar and in the issuer's access log (no secret among them: the challenge, not the verifier); the request is not authenticated before the person sees the sign-in page, so a crafted link can start a sign-in for the site's client with other scopes the client is allowed; below FAPI 2.0, which requires PAR |
+| **(a) `client.par: unavailable` in the issuer's entry of the site file** (default `required`): session sends the authorization request on the browser's URL (`response_type`, `client_id`, `redirect_uri`, `scope`, `state`, `nonce`, `code_challenge`, `code_challenge_method`), and starts only when the issuer's discovery has **no** PAR endpoint, so the setting can never turn PAR off at an issuer that has it | No sluis v1 change; the protections that stop a forged or replayed callback stay: the binding cookie, `state` used once, `nonce`, PKCE S256, the exact redirect URI, the RFC 9207 `iss` check, the code redeemed with `private_key_jwt` | The request's parameters are on the URL bar and in the issuer's access log (no secret among them: the challenge, not the verifier); the request is not authenticated before the person sees the sign-in page, so a crafted link can start a sign-in for the site's client with other scopes the client is allowed; below FAPI 2.0, which requires PAR |
 | (b) PAR in sluis v1: an endpoint in front of the library that authenticates the client, checks the parameters as `/authorize` would, keeps them once under a `request_uri` for about a minute, and expands `client_id` and `request_uri` at `/authorize` | session unchanged; FAPI 2.0's PAR at v1 | Not in the library: a new endpoint, its storage, its expiry and one-time use, a change to `/authorize`'s refusal of `request_uri`, discovery, and the conformance tests; several times the size of G1 (b), for an issuer that v2 replaces |
 
-**Pick (a).** The weaker mode is narrow, named in the site file, refused where PAR exists, and the callback's checks are unchanged. session logs at start that the site signs in without PAR. A site on sluis v2 or Keycloak keeps `required`.
+**Pick (a).** The weaker mode is narrow, named in the issuer's entry, refused where PAR exists, and the callback's checks are unchanged. session logs at start that the site signs in without PAR. A site on sluis v2 or Keycloak keeps `required`.
 
 ### G3. Token exchange
 
@@ -97,9 +97,9 @@ With no route of mode `exchange`, session refreshes nothing ([0016](0016-exchang
 ## Decision
 
 1. **sluis v1 gets `private_key_jwt`** (G1 b), in a sluis v1 release before the first sluis v1 site. session's code does not change for it.
-2. **session gets `client.par`** in the site file, `required` (default) or `unavailable` (G2 a). `unavailable` is accepted only when the issuer's discovery has no `pushed_authorization_request_endpoint`; with it, `Login` sends the authorization request on the URL, and everything after the callback is unchanged.
+2. **session gets `par`** in the `client` of an issuer's entry ([0034](0034-several-issuers-per-site.md)), `required` (default) or `unavailable` (G2 a). `unavailable` is accepted only when the issuer's discovery has no `pushed_authorization_request_endpoint`; with it, `Login` sends the authorization request on the URL, and everything after the callback is unchanged.
 3. **No route of mode `exchange` on a sluis v1 site** (G3 c).
-4. **The sluis client of a session site** is declared as: `kind: confidential`, `private_key_jwt` with the public key of session's `client-assertion` purpose, `pkce: required`, `redirects: [https://<host>/_session/callback]` (matched exactly), `signed_out: [https://<host>/]`, `backchannel_logout_uri: https://<host>/_session/backchannel-logout`, and `requires` naming the groups that may sign in. The site file's `scopes` are `openid profile email offline_access`.
+4. **The sluis client of a session site** is declared as: `kind: confidential`, `token_endpoint_auth_method: private_key_jwt` with the public key of session's `client-assertion` purpose in its `jwks`, `pkce: required`, `redirects: [https://<host>/_session/callback]` (matched exactly), `signed_out: [https://<host>/]`, `backchannel_logout_uri: https://<host>/_session/backchannel-logout`, and `requires` naming the groups that may sign in. The issuer entry's `scopes` are `openid profile email offline_access`.
 5. **The Cedar policy of a sluis v1 site** matches sluis's group names as the ID token carries them, and a person's `sub` is their email address.
 6. **Tests**: session's CI runs the sign-in, logout and back-channel logout against a sluis v1 issuer at a pinned release, beside Keycloak, as `just test-keycloak` does today; the deployed site passes the conformance scenarios ([0020](0020-conformance-suite.md), [0029](0029-the-remote-runner.md)) through its Envoy against sluis v1.
 
@@ -120,7 +120,7 @@ The owner's answers, 2026-11-25: **O1 A**, **O2 A**, **O3 A**, **O4 B** and **O5
 ## Consequences
 
 - A sluis v1 site keeps every rule of the browser session contract ([0004](0004-browser-session-contract.md)), its keys on KMS and its audit as any site; the one weaker mode is G2's, named in its site file.
-- session's site file gains `client.par`; nothing else in its configuration changes. No `client_secret` mode is built (O1 A); the first sluis v1 site waits for the sluis v1 release with `private_key_jwt`.
+- An issuer entry's `client` gains `par`; nothing else in its configuration changes. No `client_secret` mode is built (O1 A); the first sluis v1 site waits for the sluis v1 release with `private_key_jwt`.
 - sluis v1 gains `private_key_jwt` for confidential clients, which any other relying party may then use in place of a secret (sluis 0039 already prefers it).
 - A sluis v1 site's product APIs, if it has any, get the identity header, as on a sluis v2 site ([0026](0026-exchange-targets-what-the-issuer-allows.md)).
 - When the site moves to sluis v2, `client.par` goes back to `required` and the client is declared again at v2; the session store and the cookies do not change, but the people sign in again.
