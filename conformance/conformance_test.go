@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -101,12 +102,12 @@ var hosts = []host{
 // proxy container and browser profile; one proxy container runs at a time.
 func TestConformance(t *testing.T) {
 	kc := kctest.Need(t)
-	browser := startBrowser(t)
+	browser := startBrowser(t, localBrowserArgs()...)
 	for _, h := range hosts {
 		t.Run(h.name, func(t *testing.T) {
 			st := newStand(t, kc)
 			h.start(t, st)
-			scenarios(t, h, st, newTab(browser, t, st.origin))
+			runScenarios(t, st.target(h), newTab(browser, t, st.origin), runLocal)
 			st.audit.check(t, st.person)
 		})
 	}
@@ -124,33 +125,99 @@ func decodeSeen(t *testing.T, s string) seen {
 // csrf are the headers the browser helper adds to a state-changing fetch (S5); the browser adds Origin and Sec-Fetch-Site.
 var csrf = map[string]string{core.CSRFHeader: core.CSRFValue, "Accept": "application/json"}
 
-// scenarios is the suite: the same steps, in order, on every host. A step that fails stops the host's run, because the
-// later steps build on the session of the earlier ones.
-func scenarios(t *testing.T, h host, st *stand, b *tab) {
-	cookieName := st.core.CookieName()
-	step := func(name string, f func(t *testing.T)) {
-		if !t.Run(name, f) {
+// target is the site the scenarios run against: the local stand of one host (TestConformance), or a deployed site
+// (TestRemote, decision 0029). What only the local stand can do is in st, which is nil for a deployed site.
+type target struct {
+	origin, issuer string
+	cookieName     string
+	// email is the e-mail address whoami must name; empty accepts any.
+	email string
+	// signIn plays the person from the navigation that left the site to sign in until the browser is back at the site.
+	signIn func(t *testing.T, b *tab)
+	// leftToSignIn says whether the last navigation went to the issuer's sign-in.
+	leftToSignIn func(t *testing.T, b *tab) bool
+	// raw sends a request outside the browser, with its path as given and the site's Host.
+	raw func(method, path string) (answer, error)
+	// paths are the bad paths and the answers of the site's host.
+	paths []badPath
+	// ctx carries the HTTP client the suite reaches the issuer with (oidc.ClientContext).
+	ctx context.Context
+	// idle and max are the lifetimes of the site file, for the scenarios that wait them out in real time.
+	idle, max time.Duration
+	st        *stand
+	h         host
+
+	subject string // the person's subject at the issuer, from whoami
+}
+
+// where says where a scenario can run.
+type where int
+
+const (
+	// anywhere: on the local stand and against a deployed site.
+	anywhere where = iota
+	// localOnly: the scenario needs what only the local stand has (the store double, the movable clock, the issuer's admin API).
+	localOnly
+	// remoteOnly: the scenario waits out the short lifetimes of the remote site file in real time; the local stand keeps the
+	// defaults, and the local suite is the one of decision 0020.
+	remoteOnly
+)
+
+// run is which runner is asking.
+type runner int
+
+const (
+	runLocal runner = iota
+	runRemote
+)
+
+func (w where) runsOn(r runner) bool {
+	return w == anywhere || (w == localOnly && r == runLocal) || (w == remoteOnly && r == runRemote)
+}
+
+// scenario is one step of the suite. why says, for a scenario that does not run anywhere, what the other runner lacks.
+type scenario struct {
+	name  string
+	where where
+	why   string
+	run   func(t *testing.T, x *target, b *tab)
+}
+
+// runScenarios runs the suite's steps in order. A step that fails stops the run, because the later steps build on the session
+// of the earlier ones; a step the runner cannot run is skipped with its reason.
+func runScenarios(t *testing.T, x *target, b *tab, r runner) {
+	for _, s := range scenarios {
+		ok := t.Run(s.name, func(t *testing.T) {
+			if !s.where.runsOn(r) {
+				t.Skip(s.why)
+			}
+			s.run(t, x, b)
+		})
+		if !ok {
 			t.FailNow()
 		}
 	}
+}
 
-	step("no session: a public route passes, an API call gets the JSON 401", func(t *testing.T) {
-		if s := b.open(t, st.origin+"/assets/app.js"); s != http.StatusOK || decodeSeen(t, b.text(t)).Path != "/assets/app.js" {
+// scenarios is the suite: the same steps, in order, on every host and, where they can, against a deployed site.
+var scenarios = []scenario{
+	{name: "no session: a public route passes, an API call gets the JSON 401", where: anywhere, run: func(t *testing.T, x *target, b *tab) {
+		if s := b.open(t, x.origin+"/assets/app.js"); s != http.StatusOK || decodeSeen(t, b.text(t)).Path != "/assets/app.js" {
 			t.Fatalf("public route: %d %s", s, b.text(t))
 		}
 		r := b.fetch(t, "GET", "/app/x", nil)
 		if r.Status != http.StatusUnauthorized || r.Type != "application/json" || r.Body != loginRequiredBody {
 			t.Fatalf("401: %+v", r)
 		}
-	})
+	}},
 
-	step("sign-in: a navigation is sent to Keycloak, and the callback brings it back with the S1 cookie", func(t *testing.T) {
-		b.open(t, st.origin+"/app/page?x=1")
-		if !b.atLoginForm(t, st.issuer) {
-			t.Fatalf("not at Keycloak's login form: %s", b.location(t))
+	{name: "sign-in: a navigation is sent to Keycloak, and the callback brings it back with the S1 cookie", where: anywhere, run: func(t *testing.T, x *target, b *tab) {
+		b.open(t, x.origin+"/app/page?x=1")
+		if !x.leftToSignIn(t, b) {
+			t.Fatalf("not sent to Keycloak's sign-in: %s", b.location(t))
 		}
-		b.signIn(t, st.issuer, st.person)
-		if loc := b.location(t); loc != st.origin+"/app/page?x=1" {
+		x.signIn(t, b)
+		if loc := b.location(t); loc != x.origin+"/app/page?x=1" {
 			t.Fatalf("landed at %s", loc)
 		}
 		got := decodeSeen(t, b.text(t))
@@ -160,13 +227,17 @@ func scenarios(t *testing.T, h host, st *stand, b *tab) {
 		if c, ok := got.Headers["Cookie"]; ok {
 			t.Fatalf("the site got session's cookie: %q", c)
 		}
-		c := b.cookie(t, cookieName)
-		if c == nil || !c.Secure || !c.HTTPOnly || c.SameSite != network.CookieSameSiteLax || c.Path != "/" || c.Domain != siteName || !c.Session {
+		host := strings.TrimPrefix(x.origin, "https://")
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		c := b.cookie(t, x.cookieName)
+		if c == nil || !c.Secure || !c.HTTPOnly || c.SameSite != network.CookieSameSiteLax || c.Path != "/" || c.Domain != host || !c.Session {
 			t.Fatalf("the session cookie (S1): %+v", c)
 		}
-	})
+	}},
 
-	step("protected route: the site gets the request without session's cookie or the browser's owned headers (S8)", func(t *testing.T) {
+	{name: "protected route: the site gets the request without session's cookie or the browser's owned headers (S8)", where: anywhere, run: func(t *testing.T, _ *target, b *tab) {
 		run(t, b, chromedp.Evaluate[chromedp.Void](`document.cookie = "theme=dark; path=/; secure"`))
 		r := b.fetch(t, "GET", "/app/x?q=1", map[string]string{"Authorization": "Bearer forged", "X-Session-Identity": "forged",
 			"X-Session-Token": "forged"})
@@ -185,21 +256,21 @@ func scenarios(t *testing.T, h host, st *stand, b *tab) {
 		if got.Path != "/app/x?q=1" {
 			t.Fatalf("the site got the path %q", got.Path)
 		}
-	})
+	}},
 
-	var subject string
-	step("sign-in prefix: /_session/ reaches session without a check", func(t *testing.T) {
+	{name: "sign-in prefix: /_session/ reaches session without a check", where: anywhere, run: func(t *testing.T, x *target, b *tab) {
 		r := b.fetch(t, "GET", core.PathWhoami, nil)
 		var who struct {
 			Sub, Email string
 		}
-		if r.Status != http.StatusOK || json.Unmarshal([]byte(r.Body), &who) != nil || who.Sub == "" || who.Email != st.person.Email {
+		if r.Status != http.StatusOK || json.Unmarshal([]byte(r.Body), &who) != nil || who.Sub == "" ||
+			(x.email != "" && who.Email != x.email) {
 			t.Fatalf("whoami: %+v", r)
 		}
-		subject = who.Sub
-	})
+		x.subject = who.Sub
+	}},
 
-	step("CSRF: a POST with the header passes, without it is refused (S5)", func(t *testing.T) {
+	{name: "CSRF: a POST with the header passes, without it is refused (S5)", where: anywhere, run: func(t *testing.T, _ *target, b *tab) {
 		r := b.fetch(t, "POST", "/app/x", csrf)
 		if r.Status != http.StatusOK || decodeSeen(t, r.Body).Method != http.MethodPost {
 			t.Fatalf("POST with the CSRF header: %+v", r)
@@ -208,22 +279,22 @@ func scenarios(t *testing.T, h host, st *stand, b *tab) {
 		if r.Status != http.StatusForbidden || r.Body != `{"error":"csrf"}` {
 			t.Fatalf("POST without the CSRF header: %+v", r)
 		}
-	})
+	}},
 
-	step("exchange and identity header: the site gets a token of its audience, or the signed identity", func(t *testing.T) {
-		ctx := context.Background()
+	{name: "exchange and identity header: the site gets a token of its audience, or the signed identity", where: anywhere, run: func(t *testing.T, x *target, b *tab) {
+		ctx := x.ctx
 		r := b.fetch(t, "GET", "/api/billing/x", map[string]string{"Authorization": "Bearer forged"})
 		got := decodeSeen(t, r.Body)
 		a := got.Headers["Authorization"]
 		if r.Status != http.StatusOK || len(a) != 1 || !strings.HasPrefix(a[0], "Bearer ") {
 			t.Fatalf("exchange route: %d %q", r.Status, a)
 		}
-		p, err := oidc.NewProvider(ctx, st.issuer)
+		p, err := oidc.NewProvider(ctx, x.issuer)
 		if err != nil {
 			t.Fatal(err)
 		}
 		tok, err := p.VerifierContext(ctx, &oidc.Config{ClientID: "billing"}).Verify(ctx, strings.TrimPrefix(a[0], "Bearer "))
-		if err != nil || tok.Subject != subject {
+		if err != nil || tok.Subject != x.subject {
 			t.Fatalf("the exchanged token: %v", err)
 		}
 
@@ -256,7 +327,7 @@ func scenarios(t *testing.T, h host, st *stand, b *tab) {
 		var claims struct {
 			Iss, Aud, Sub string
 		}
-		if json.Unmarshal(payload, &claims) != nil || claims.Iss != st.origin || claims.Aud != "legacy-app" || claims.Sub != subject {
+		if json.Unmarshal(payload, &claims) != nil || claims.Iss != x.origin || claims.Aud != "legacy-app" || claims.Sub != x.subject {
 			t.Fatalf("identity claims: %s", payload)
 		}
 
@@ -265,29 +336,30 @@ func scenarios(t *testing.T, h host, st *stand, b *tab) {
 		if r.Status != http.StatusForbidden || r.Body != `{"error":"exchange_refused"}` {
 			t.Fatalf("refused exchange, fetch: %+v", r)
 		}
-		if s := b.open(t, st.origin+"/api/nowhere/x"); s != http.StatusForbidden || !strings.Contains(b.text(t), "Access refused") {
+		if s := b.open(t, x.origin+"/api/nowhere/x"); s != http.StatusForbidden || !strings.Contains(b.text(t), "Access refused") {
 			t.Fatalf("refused exchange, navigation: %d %q", s, b.text(t))
 		}
 		if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusOK {
 			t.Fatalf("after the refusal: %+v", r)
 		}
-	})
+	}},
 
-	step("store outage: 503, never an allow", func(t *testing.T) {
-		st.mem.Down.Store(true)
-		r := b.fetch(t, "GET", "/app/x", nil)
-		st.mem.Down.Store(false)
-		if r.Status != http.StatusServiceUnavailable || r.Body != h.unavailable {
-			t.Fatalf("store down: %+v, want the body %q", r, h.unavailable)
-		}
-		if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusOK {
-			t.Fatalf("store back: %+v", r)
-		}
-	})
+	{name: "store outage: 503, never an allow", where: localOnly,
+		why: "local only: a deployed site's store cannot be taken down from the test", run: func(t *testing.T, x *target, b *tab) {
+			x.st.mem.Down.Store(true)
+			r := b.fetch(t, "GET", "/app/x", nil)
+			x.st.mem.Down.Store(false)
+			if r.Status != http.StatusServiceUnavailable || r.Body != x.h.unavailable {
+				t.Fatalf("store down: %+v, want the body %q", r, x.h.unavailable)
+			}
+			if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusOK {
+				t.Fatalf("store back: %+v", r)
+			}
+		}},
 
-	step("bad paths: dot segments, encoded dots, slashes and backslashes, merged slashes", func(t *testing.T) {
-		for _, p := range h.paths {
-			a, err := raw(st.proxy, http.MethodGet, p.path, st.host)
+	{name: "bad paths: dot segments, encoded dots, slashes and backslashes, merged slashes", where: anywhere, run: func(t *testing.T, x *target, _ *tab) {
+		for _, p := range x.paths {
+			a, err := x.raw(http.MethodGet, p.path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -299,11 +371,11 @@ func scenarios(t *testing.T, h host, st *stand, b *tab) {
 				t.Errorf("%s: the site got %q, want %q", p.path, decodeSeen(t, a.body).Path, p.site)
 			}
 		}
-	})
+	}},
 
-	step("logout: a POST with CSRF ends the session and sends the browser to Keycloak's end-session (S6)", func(t *testing.T) {
+	{name: "logout: a POST with CSRF ends the session and sends the browser to Keycloak's end-session (S6)", where: anywhere, run: func(t *testing.T, x *target, b *tab) {
 		r := b.fetch(t, "POST", core.PathLogout, map[string]string{"Accept": "application/json"})
-		if r.Status != http.StatusForbidden || b.cookie(t, cookieName) == nil {
+		if r.Status != http.StatusForbidden || b.cookie(t, x.cookieName) == nil {
 			t.Fatalf("logout without the CSRF header: %+v", r)
 		}
 		if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusOK {
@@ -314,54 +386,97 @@ func scenarios(t *testing.T, h host, st *stand, b *tab) {
 			LogoutURL string `json:"logout_url"`
 		}
 		if r.Status != http.StatusOK || json.Unmarshal([]byte(r.Body), &out) != nil ||
-			!strings.HasPrefix(out.LogoutURL, st.issuer+"/protocol/openid-connect/logout?") || !strings.Contains(out.LogoutURL, "id_token_hint=") {
+			!strings.HasPrefix(out.LogoutURL, x.issuer+"/protocol/openid-connect/logout?") || !strings.Contains(out.LogoutURL, "id_token_hint=") {
 			t.Fatalf("logout: %+v", r)
 		}
-		if c := b.cookie(t, cookieName); c != nil {
+		if c := b.cookie(t, x.cookieName); c != nil {
 			t.Fatalf("the cookie was not cleared: %+v", c)
 		}
 		if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusUnauthorized {
 			t.Fatalf("after the logout: %+v", r)
 		}
 		// Keycloak ends its own session without asking (id_token_hint) and sends the browser back to the site, which sends it to
-		// sign in: Keycloak's form shows, because Keycloak's session is gone too.
+		// sign in: Keycloak's sign-in shows, because Keycloak's session is gone too.
 		b.open(t, out.LogoutURL)
-		b.waitFor(t, "Keycloak's login form after the logout", func() bool { return b.atLoginForm(t, st.issuer) })
-		b.signIn(t, st.issuer, st.person)
-		if loc := b.location(t); loc != st.origin+"/" {
+		b.waitFor(t, "Keycloak's sign-in after the logout", func() bool { return x.leftToSignIn(t, b) })
+		x.signIn(t, b)
+		if loc := b.location(t); loc != x.origin+"/" {
 			t.Fatalf("after the new sign-in: %s", loc)
 		}
-	})
+	}},
 
-	step("back-channel logout: Keycloak's logout ends the session at once, through the host's sign-in prefix", func(t *testing.T) {
-		if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusOK {
-			t.Fatalf("before: %+v", r)
-		}
-		st.kc.LogoutUser(t, st.realm, st.person.Username)
-		b.waitFor(t, "the 401 after the back-channel logout", func() bool {
-			return b.fetch(t, "GET", "/app/x", nil).Status == http.StatusUnauthorized
-		})
-	})
+	{name: "back-channel logout: Keycloak's logout ends the session at once, through the host's sign-in prefix", where: localOnly,
+		why: "local only: ending the person's Keycloak session from outside the browser takes the realm's admin API", run: func(t *testing.T, x *target, b *tab) {
+			if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusOK {
+				t.Fatalf("before: %+v", r)
+			}
+			x.st.kc.LogoutUser(t, x.st.realm, x.st.person.Username)
+			b.waitFor(t, "the 401 after the back-channel logout", func() bool {
+				return b.fetch(t, "GET", "/app/x", nil).Status == http.StatusUnauthorized
+			})
+		}},
 
-	step("refresh refused: a session Keycloak ended unseen ends at its next exchange, and the check clears the cookie", func(t *testing.T) {
-		b.open(t, st.origin+"/app/again")
-		b.signIn(t, st.issuer, st.person)
-		if b.cookie(t, cookieName) == nil {
-			t.Fatal("no session cookie")
-		}
-		st.withoutBackChannel(t)
-		st.kc.LogoutUser(t, st.realm, st.person.Username)
-		// Keycloak's access tokens live five minutes: six minutes on, the sign-in token is old and is refreshed first.
-		st.ahead.Store(int64(6 * time.Minute))
-		defer st.ahead.Store(0)
-		r := b.fetch(t, "GET", "/api/billing/x", nil)
-		if r.Status != http.StatusUnauthorized || !strings.Contains(r.Body, `"login_required"`) {
-			t.Fatalf("after the refused refresh: %+v", r)
-		}
-		// The only Set-Cookie of a check's answer today; on nginx the only one that can pass (decision 0018).
-		if c := b.cookie(t, cookieName); c != nil {
-			t.Fatalf("the check did not clear the cookie: %+v", c)
-		}
-	})
+	{name: "refresh refused: a session Keycloak ended unseen ends at its next exchange, and the check clears the cookie", where: localOnly,
+		why: "local only: it needs the realm's admin API and a clock six minutes ahead (Keycloak's access tokens live five)", run: func(t *testing.T, x *target, b *tab) {
+			st := x.st
+			b.open(t, x.origin+"/app/again")
+			x.signIn(t, b)
+			if b.cookie(t, x.cookieName) == nil {
+				t.Fatal("no session cookie")
+			}
+			st.withoutBackChannel(t)
+			st.kc.LogoutUser(t, st.realm, st.person.Username)
+			// Keycloak's access tokens live five minutes: six minutes on, the sign-in token is old and is refreshed first.
+			st.ahead.Store(int64(6 * time.Minute))
+			defer st.ahead.Store(0)
+			r := b.fetch(t, "GET", "/api/billing/x", nil)
+			if r.Status != http.StatusUnauthorized || !strings.Contains(r.Body, `"login_required"`) {
+				t.Fatalf("after the refused refresh: %+v", r)
+			}
+			// The only Set-Cookie of a check's answer today; on nginx the only one that can pass (decision 0018).
+			if c := b.cookie(t, x.cookieName); c != nil {
+				t.Fatalf("the check did not clear the cookie: %+v", c)
+			}
+		}},
 
+	{name: "idle lifetime: a session unused for longer than session.idle ends", where: remoteOnly,
+		why: "remote only: it waits out session.idle of the remote site file in real time", run: func(t *testing.T, x *target, b *tab) {
+			if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusOK {
+				t.Fatalf("before: %+v", r)
+			}
+			time.Sleep(x.idle + 15*time.Second)
+			if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusUnauthorized || !strings.Contains(r.Body, `"login_required"`) {
+				t.Fatalf("after %s idle: %+v", x.idle, r)
+			}
+		}},
+
+	{name: "absolute lifetime: a session in use ends at session.max", where: remoteOnly,
+		why: "remote only: it waits out session.max of the remote site file in real time", run: func(t *testing.T, x *target, b *tab) {
+			b.open(t, x.origin+"/app/max")
+			if x.leftToSignIn(t, b) {
+				x.signIn(t, b)
+			}
+			signedIn := time.Now()
+			if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusOK {
+				t.Fatalf("after the sign-in: %+v", r)
+			}
+			// A request every 20 seconds keeps the session from going idle; it must pass until shortly before max and fail
+			// shortly after it.
+			for {
+				time.Sleep(20 * time.Second)
+				r := b.fetch(t, "GET", "/app/x", nil)
+				age := time.Since(signedIn)
+				switch {
+				case r.Status == http.StatusOK && age > x.max+30*time.Second:
+					t.Fatalf("still signed in %s after the sign-in; session.max is %s", age.Round(time.Second), x.max)
+				case r.Status == http.StatusOK:
+				case r.Status == http.StatusUnauthorized && age < x.max-10*time.Second:
+					t.Fatalf("ended %s after the sign-in, before session.max %s: %+v", age.Round(time.Second), x.max, r)
+				case r.Status == http.StatusUnauthorized:
+					return
+				default:
+					t.Fatalf("at %s: %+v", age.Round(time.Second), r)
+				}
+			}
+		}},
 }

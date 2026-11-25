@@ -19,8 +19,9 @@ check: lint build test test-dynamodb test-keycloak test-envoy test-nginx test-co
 build:
     CGO_ENABLED=0 go build ./...
 
-# The executable of the image for one architecture, at dist/image/linux/<arch>/session, with its version (decision 0028): a
-# semantic version, which `session version` prints and the audit records name. The image workflow runs it for amd64 and arm64.
+# The executables of the images for one architecture (decision 0028): dist/image/linux/<arch>/session, with its version, a
+# semantic version which `session version` prints and the audit records name; and beside it session-echo, the test backend of a
+# deployed conformance site (decision 0029). The image workflow runs it for amd64 and arm64.
 build-image arch version:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -28,6 +29,7 @@ build-image arch version:
     out="dist/image/linux/{{ arch }}"
     mkdir -p "$out"
     CGO_ENABLED=0 GOOS=linux GOARCH="{{ arch }}" go build -trimpath -ldflags "-s -w -X main.version={{ version }}" -o "$out/session" ./cmd/session
+    CGO_ENABLED=0 GOOS=linux GOARCH="{{ arch }}" go build -trimpath -ldflags "-s -w" -o "$out/session-echo" ./conformance/echo/session-echo
 
 # The unit tests: no container, no network. The store is the in-process test double. Verbose, so that a skip shows its reason.
 test:
@@ -113,6 +115,34 @@ test-conformance:
     SESSION_TEST_KEYCLOAK="http://127.0.0.1:$port" SESSION_TEST_KEYCLOAK_ADMIN_PASSWORD="$password" \
       SESSION_TEST_ENVOY_IMAGE="{{ envoy_image }}" SESSION_TEST_NGINX_IMAGE="{{ nginx_image }}" SESSION_TEST_BROWSER_IMAGE="{{ browser_image }}" \
       go test -count=1 -v ./conformance/... 2>&1 \
+      | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/' ; test "${PIPESTATUS[0]}" -eq 0
+
+# Settings are KEY=VALUE arguments, each one becoming SESSION_REMOTE_<KEY>:
+#   just test-remote HOST=docs.devel.example.com ISSUER=https://idp.devel.example.com/realms/x IDP=mimic HINT=alice
+# Keys: HOST (required), ISSUER, SITE_FILE, IDP, HINT, EMAIL, CA, RESOLVE, PROXY, MIMIC, MIMIC_TOKEN_FILE, USERNAME, AUDIT; SKIP
+# is go test's -skip. A
+# token or a password goes in the environment (SESSION_REMOTE_MIMIC_TOKEN, SESSION_REMOTE_PASSWORD), never on the command line.
+# The conformance scenarios that can run against a deployed site (decision 0029, conformance/remote/README.md), in the pinned
+# headless browser, which is removed at the end.
+[positional-arguments]
+test-remote *settings:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for kv in "$@"; do
+        key=${kv%%=*}
+        case "$key" in
+            HOST|ISSUER|SITE_FILE|IDP|HINT|EMAIL|CA|RESOLVE|PROXY|MIMIC|MIMIC_TOKEN_FILE|USERNAME|AUDIT|SKIP) ;;
+            *) echo "test-remote: unknown setting $key (see the recipe's comment)" >&2; exit 2 ;;
+        esac
+        [ "$kv" != "$key" ] || { echo "test-remote: $kv is not KEY=VALUE" >&2; exit 2; }
+        value=${kv#*=}
+        case "$key" in SITE_FILE|CA|MIMIC_TOKEN_FILE) value=$(cd "{{ invocation_directory() }}" && realpath "$value") ;; esac
+        export "SESSION_REMOTE_$key=$value"
+    done
+    [ -n "${SESSION_REMOTE_HOST:-}" ] || { echo "test-remote: HOST=... is required" >&2; exit 2; }
+    docker pull -q {{ browser_image }} >/dev/null
+    SESSION_TEST_BROWSER_IMAGE="{{ browser_image }}" go test -count=1 -timeout 30m -v -run '^TestRemote$' \
+      ${SESSION_REMOTE_SKIP:+-skip "$SESSION_REMOTE_SKIP"} ./conformance/ 2>&1 \
       | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/' ; test "${PIPESTATUS[0]}" -eq 0
 
 # Format check, vet and lint of the Go code, and the workflows.

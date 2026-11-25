@@ -27,6 +27,7 @@ import (
 
 	"github.com/truvity/atoom/key/awskms"
 
+	"github.com/truvity/session/conformance/echo"
 	"github.com/truvity/session/core"
 	"github.com/truvity/session/internal/atoomx"
 	"github.com/truvity/session/internal/audit"
@@ -88,8 +89,16 @@ func (r *records) check(t *testing.T, p kctest.Person) {
 	t.Helper()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	checkRecords(t, r.b.String(), []string{p.Username, p.Email}, []string{audit.ActionSignIn, audit.ActionDenied,
+		audit.ActionTokenExchange, audit.ActionLogout, audit.ActionBackChannelLogout, audit.ActionRefresh})
+}
+
+// checkRecords says that every line of text is a record, that none names any of names in clear, and that the records hold
+// every one of actions.
+func checkRecords(t *testing.T, text string, names, actions []string) {
+	t.Helper()
 	seen := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSuffix(r.b.String(), "\n"), "\n") {
+	for _, line := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
 		var rec struct {
 			Metadata struct {
 				EventCode string `json:"event_code"`
@@ -98,13 +107,14 @@ func (r *records) check(t *testing.T, p kctest.Person) {
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatalf("not a record: %q", line)
 		}
-		if strings.Contains(line, p.Username) || strings.Contains(line, p.Email) {
-			t.Fatalf("a record names the person: %s", line)
+		for _, n := range names {
+			if n != "" && strings.Contains(line, n) {
+				t.Fatalf("a record names the person: %s", line)
+			}
 		}
 		seen[rec.Metadata.EventCode] = true
 	}
-	for _, a := range []string{audit.ActionSignIn, audit.ActionDenied, audit.ActionTokenExchange, audit.ActionLogout,
-		audit.ActionBackChannelLogout, audit.ActionRefresh} {
+	for _, a := range actions {
 		if !seen[a] {
 			t.Errorf("no record of %s; seen %v", a, seen)
 		}
@@ -133,12 +143,8 @@ func serveOn(t *testing.T, h http.Handler) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// seen is what the site behind the proxy received. The test site echoes it; session never does.
-type seen struct {
-	Method  string              `json:"method"`
-	Path    string              `json:"path"`
-	Headers map[string][]string `json:"headers"`
-}
+// seen is what the site behind the proxy received. The test site (package echo) echoes it; session never does.
+type seen = echo.Seen
 
 // newStand makes the session service of one host: a realm whose redirect, post-logout and back-channel addresses are this
 // stand's, the check on all three listeners, the sign-in paths and the site. The proxy is started by the host.
@@ -240,12 +246,21 @@ func newStand(t *testing.T, kc *kctest.Keycloak) *stand {
 		"SESSION_HTTP_PORT":   serveOn(t, &envoy.HTTP{Core: c, Prefix: "/check"}),
 		"SESSION_CHECK_PORT":  serveOn(t, &nginx.Handler{Core: c, ErrorPage: c.Rules().ErrorPage}),
 		"SESSION_SIGNIN_PORT": serveOn(t, mux),
-		"SITE_PORT": serveOn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(seen{Method: r.Method, Path: r.URL.RequestURI(), Headers: r.Header})
-		})),
+		"SITE_PORT":           serveOn(t, echo.Handler()),
 	}
 	return st
+}
+
+// target is the stand as the scenarios see it, through the host h: Keycloak's password form, and the bad paths sent to the
+// proxy's plain listener.
+func (st *stand) target(h host) *target {
+	return &target{
+		origin: st.origin, issuer: st.issuer, cookieName: st.core.CookieName(), email: st.person.Email, ctx: context.Background(),
+		signIn:       func(t *testing.T, b *tab) { b.signIn(t, st.issuer, st.person) },
+		leftToSignIn: func(t *testing.T, b *tab) bool { return b.atLoginForm(t, st.issuer) },
+		raw:          func(method, path string) (answer, error) { return raw(st.proxy, method, path, st.host) },
+		paths:        h.paths, st: st, h: h,
+	}
 }
 
 // placeholder is a ${NAME} of an example; nginx's own $variables are left alone.

@@ -5,6 +5,9 @@
 # - on a tag vX.Y.Z: ghcr.io/truvity/session:X.Y.Z, built with the version X.Y.Z. A tag is made on the owner's approval
 #   (decision 0025); this workflow makes none.
 #
+# Beside it, with the same tag, ghcr.io/truvity/session-echo: the test backend of a deployed conformance site (decision 0029,
+# deploy/echo/Dockerfile), built from the same commit in the same jobs.
+#
 # Two jobs, so the credential and the build are apart: `build` compiles the executables with no write permission and no token,
 # and `publish` holds packages: write, builds nothing and only copies the executables into a distroless image
 # (deploy/image/Dockerfile has no RUN). A pull request never runs this workflow; ci.yaml judges every pull request. A tag is
@@ -69,6 +72,7 @@ jobs:
           done
           got=$(dist/image/linux/amd64/session version)
           [ "$got" = "$VERSION" ] || { echo "image: the executable says $got, not $VERSION" >&2; exit 1; }
+          [ -x dist/image/linux/arm64/session-echo ] || { echo "image: no session-echo" >&2; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: session-image-dist
@@ -97,26 +101,33 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-      - name: Push the image
+      - name: Push the images
         env:
           SHA: ${{ github.sha }}
           TAG: ${{ needs.build.outputs.tag }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
-          ref="ghcr.io/truvity/session:$TAG"
-          if docker manifest inspect "$ref" >/dev/null 2>&1; then
-            echo "image: $ref is already in the registry; a tag is never moved" >&2
-            exit 1
-          fi
-          chmod 0555 dist/image/linux/*/session
+          # name:Dockerfile; both tags are checked before either is pushed, so a refused tag leaves the pair as it was.
+          images="session:deploy/image/Dockerfile session-echo:deploy/echo/Dockerfile"
+          for i in $images; do
+            ref="ghcr.io/truvity/${i%%:*}:$TAG"
+            if docker manifest inspect "$ref" >/dev/null 2>&1; then
+              echo "image: $ref is already in the registry; a tag is never moved" >&2
+              exit 1
+            fi
+          done
+          chmod 0555 dist/image/linux/*/session dist/image/linux/*/session-echo
           builder="session-$GITHUB_RUN_ID"
           docker buildx create --name "$builder" --driver docker-container \
             --driver-opt 'image=moby/buildkit:v0.29.0@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5' >/dev/null
           trap 'docker buildx rm --force "$builder" >/dev/null 2>&1 || true' EXIT
-          docker buildx build --builder "$builder" --platform linux/amd64,linux/arm64 --provenance=false --sbom=false \
-            --label "org.opencontainers.image.revision=$SHA" --label "org.opencontainers.image.version=$VERSION" \
-            --file deploy/image/Dockerfile --metadata-file dist/metadata.json --tag "$ref" --push dist/image
-          digest=$(jq -r '."containerimage.digest"' dist/metadata.json)
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "image: no digest in the build's metadata" >&2; exit 1; }
-          echo "Pushed \`$ref@$digest\` (session version $VERSION)" | tee -a "$GITHUB_STEP_SUMMARY"
+          for i in $images; do
+            ref="ghcr.io/truvity/${i%%:*}:$TAG"
+            docker buildx build --builder "$builder" --platform linux/amd64,linux/arm64 --provenance=false --sbom=false \
+              --label "org.opencontainers.image.revision=$SHA" --label "org.opencontainers.image.version=$VERSION" \
+              --file "${i#*:}" --metadata-file dist/metadata.json --tag "$ref" --push dist/image
+            digest=$(jq -r '."containerimage.digest"' dist/metadata.json)
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "image: no digest in the build's metadata" >&2; exit 1; }
+            echo "Pushed \`$ref@$digest\` (session version $VERSION)" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
