@@ -21,7 +21,7 @@ The seal block is already hosted by session ([0021](0021-atoom-policy-loader-and
 | Where the block runs | In session's process, mounted on an in-memory transport and called through its generated client, over the seal block session already runs (`internal/sealer`, `Options.Tokens`). One seal block for sealing and signing |
 | One key client | The seal block takes one client of the key port: `key/route` over the drivers session opened (`atoomx.KeySet.Route`), so each purpose stays on the driver `--key` chose for it, as 0019 says |
 | The token purposes | `client-assertion` (type `JWT`) and `identity-header` (type `session-identity+jwt`), ES256, kid the key port's `key_id`. They are signing purposes of the seal block (`token.SealPurposes`), and their keys are declared to their drivers as before (`signin.Purposes`) |
-| The seal block's rules | Now also allow `Sign` and `PublicKey`, under the two token purposes only. Every other purpose and operation is refused as before (`Rotate`, `Erase`, `Rewrap`, `MarkCompromised`) |
+| The seal block's rules | The owner's choice: they now also allow `Sign` and `PublicKey`, under the two signing purposes `client-assertion` and `identity-header` only. Every other purpose and operation is refused as before (`Sign` and `PublicKey` under any other purpose, `Rotate`, `Erase`, `Rewrap`, `MarkCompromised`) |
 | The token block's rules | Allow every call (`token.AllowAll`): its one caller is session's own code in this process, the block itself refuses a type that is not its purpose's, and the seal block's rules bound what it signs |
 | The block's facts | Not observed. Signing was not an audit event before, and [0008](0008-audit.md) lists the kinds |
 | Claims and lifetimes | session's, unchanged: the claims as JSON with their names in order (Go's encoding of a map), the assertion's 60 seconds and `jti`, the identity header's lifetime and its 30-second reuse in the core |
@@ -41,9 +41,9 @@ The seal block is already hosted by session ([0021](0021-atoom-policy-loader-and
 | Road | Why not |
 | --- | --- |
 | Keep session's own JWS code | A second copy of what atoom now has, which 0006 rules out |
-| A second seal block for signing only, with its own rules | Two blocks over one wrapping key and one store prefix, and a second start that ensures the same keys; one host's rules say the same |
+| A second seal block for signing only, with its own rules, so the sealing block's rules stay as they were | Two blocks over one wrapping key and one store prefix, and a second start that ensures the same keys; the rules of one host, limited to the two signing purposes, say the same with less to run |
 | A seal client per purpose instead of `key/route` | The seal block takes one key client; routing is what `key/route` is for |
-| Rules in the seal block that parse what is signed (as sluis key@ checks a JWS of the expected shape) | Its one caller is the token block in this process, which builds the signing input itself; a check would repeat the block's own |
+| A header rule in the seal block: parse each signing input and check its header (alg ES256, the purpose's kid and typ), as sluis key@ checks a JWS of the expected shape | Its one caller is the token block in this process, which builds the signing input itself and refuses a type that is not its purpose's; the rule would repeat the block's own checks in code of session's |
 | The RFC 7638 thumbprint as kid | 0016 and 0019 keep the `key_id`, the key ARN on KMS; a new kid would make issuers and apps fetch the JWKS again for nothing |
 | Handing earlier keys to `KeySet` (`HostKey`) now | No site rotates yet; it is the way the JWKS will keep the previous key (0019) until atoom's rotation ring (B8b) |
 
