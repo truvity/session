@@ -5,6 +5,15 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### atoom 0.6.0: the token block
+
+- **atoom 0.6.0** for every atoom module, and one new one: `blocks/token` ([0022](docs/decisions/0022-atoom-token-block.md), proposed). `spike/` keeps the pins it ran with.
+- **The client assertion and the identity header are signed by atoom's `token` block**, in place of session's own JWS code: in process, over the seal block session already runs, which signs through the key port. `key/route` gives the seal block one key client in front of the drivers, so each purpose stays on the driver `--key` chose.
+- **`/_session/jwks` is the block's key set** of the two purposes, with the same `Cache-Control: max-age=300`. The keys and their members are the same; only the order of the members inside each key differs.
+- Unchanged for issuers and apps: the header (`alg` ES256, `kid` the key port's `key_id`, `typ` `JWT` or `session-identity+jwt`, in that order), the claims, the lifetimes and the identity header's 30-second reuse.
+- The seal block's rules now allow `Sign` and `PublicKey` under the two signing purposes, and nothing more. The block reads each public key at its start and for each key set rather than for each signature, and checks each signature before it answers. The start ensures the signing keys with the wrapping key: a missing or wrong KMS key fails it as before.
+- New: `sealertest.Tokens`, the seal and token blocks over the signing keys a test chose; a test that the headers are byte for byte the earlier ones.
+
 ### atoom 0.5.0: the policy loader and the seal block
 
 - **atoom 0.5.0** for every atoom module (`common`, `key`, `key/awskms`, `key/software`, `source`, `source/file`, `store`, `store/dynamodb`, `socket`), and two new ones: `policy` and `blocks/seal` ([0021](docs/decisions/0021-atoom-policy-loader-and-seal-block.md)). `spike/` keeps the pins it ran with.
