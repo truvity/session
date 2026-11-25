@@ -5,6 +5,11 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### sluis v1 as an issuer
+
+- New, site file: an issuer entry's `client.par`, `required` (the default) or `unavailable` ([0033](docs/decisions/0033-sluis-v1-as-an-issuer.md), owner decisions D92 A and O2 A). With `unavailable` the sign-in at that issuer sends the authorization request on the browser's URL instead of by PAR; the callback's checks are the same (the binding cookie, the state once, the nonce, PKCE S256, RFC 9207 `iss`, the code redeemed with the client's `private_key_jwt` assertion). session refuses to start with `unavailable` when the issuer's discovery offers PAR, so the setting never turns PAR off where the issuer has it, and logs a warning at start for each issuer that signs in without it. Any other value is refused.
+- New: `just test-sluis-v1`, the sign-in handler against sluis v1 in a container (no PAR, `private_key_jwt`): the authorization request on the URL taken by sluis, session's client assertion accepted at its revocation endpoint and refused the second time, and the logout to its end-session. The image pin is a placeholder until a sluis release has `private_key_jwt`; until then the recipe says so and passes. `SESSION_TEST_SLUIS_V1_BIN` runs the same test against a sluis binary.
+
 ### Several issuers per site
 
 - **Breaking, site file:** a site names its issuers in a list, `issuers` ([0034](docs/decisions/0034-several-issuers-per-site.md), owner decision D84 A). Each entry has an `id`, a `label`, the issuer identifier `issuer`, its `client` and its `scopes`. The top-level `issuer`, `client` and `scopes` are gone, and a file that still has them is refused with a message that names 0034: move them into one entry of `issuers` and give it an `id` and a `label`. With one issuer, behaviour is as before. No migration: nothing is deployed.

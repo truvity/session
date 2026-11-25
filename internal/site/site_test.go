@@ -124,3 +124,24 @@ func TestALoopbackIssuerOnPlainHTTPIsAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// client.par (decision 0033): required by default, unavailable for an issuer without PAR, nothing else.
+func TestClientPAR(t *testing.T) {
+	for value, without := range map[string]bool{"": false, "required": false, "unavailable": true} {
+		text := good
+		if value != "" {
+			text = strings.Replace(good, "      auth: private_key_jwt\n", "      auth: private_key_jwt\n      par: "+value+"\n", 1)
+		}
+		f, err := site.Parse([]byte(text))
+		if err != nil {
+			t.Fatalf("par %q: %v", value, err)
+		}
+		if got := f.Issuers[0].Client.WithoutPAR(); got != without {
+			t.Errorf("par %q: WithoutPAR = %v, want %v", value, got, without)
+		}
+	}
+	bad := strings.Replace(good, "      auth: private_key_jwt\n", "      auth: private_key_jwt\n      par: optional\n", 1)
+	if _, err := site.Parse([]byte(bad)); err == nil || !strings.Contains(err.Error(), "client.par") {
+		t.Errorf("par optional: %v, want refused", err)
+	}
+}

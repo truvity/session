@@ -8,13 +8,16 @@ envoy_image := "envoyproxy/envoy:v1.39.6@sha256:1fde8efee875e4e4f6a39a90fe49d933
 nginx_image := "nginx:1.30.8-alpine-slim@sha256:e9eaa7298465eab06d618c51556fdcf3fb5061f9ff40bd28ee898fbd7ee7f900"
 browser_image := "chromedp/headless-shell:157.0.8103.27@sha256:7bee201478b2f6266aae01243740ee85c16281e32f42d3aed9fdf04f4eace7a1"
 nats_image := "nats:2.15.2-alpine@sha256:afae2fdbe2e326c65e1246cb83b9d05d319188734f3bd577ac8072daae78a10f"
+# sluis v1, the issuer without PAR and with private_key_jwt (decision 0033). PLACEHOLDER: no sluis release has private_key_jwt yet.
+# Pin `ghcr.io/truvity/sluis/sluis:<that release>@sha256:<digest>` here when it is out; until then test-sluis-v1 says so and passes.
+sluis_v1_image := "PLACEHOLDER"
 dynamodb_image := "amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86"
 
 default:
     @just --list
 
 # Everything CI runs.
-check: lint build test test-dynamodb test-nats test-keycloak test-envoy test-nginx test-conformance vuln
+check: lint build test test-dynamodb test-nats test-keycloak test-sluis-v1 test-envoy test-nginx test-conformance vuln
 
 # Build every package. CGO is off: the binary is static.
 build:
@@ -93,6 +96,20 @@ test-keycloak:
     if [ -z "$up" ]; then docker logs "$name" 2>&1 | tail -40; exit 1; fi
     SESSION_TEST_KEYCLOAK="http://127.0.0.1:$port" SESSION_TEST_KEYCLOAK_ADMIN_PASSWORD="$password" \
       go test -count=1 -v ./internal/signin/... 2>&1 \
+      | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/' ; test "${PIPESTATUS[0]}" -eq 0
+
+# The sign-in handler against sluis v1 (decision 0033) in a container on the host network: the test writes sluis's configuration
+# and a policy with the client's public key, starts the container on a free port and removes it at the end. Against a checkout of
+# sluis instead: SESSION_TEST_SLUIS_V1_BIN=<sluis binary> go test -run '^TestTheSignInAgainstSluisV1$' ./internal/signin/
+test-sluis-v1:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    image='{{ sluis_v1_image }}'
+    if [ "$image" = PLACEHOLDER ]; then
+        echo "::warning::test-sluis-v1 skipped: sluis_v1_image is a placeholder until a sluis release has private_key_jwt (decision 0033)"
+        exit 0
+    fi
+    SESSION_TEST_SLUIS_V1_IMAGE="$image" go test -count=1 -v -run '^TestTheSignInAgainstSluisV1$' ./internal/signin/ 2>&1 \
       | awk '!/^=== (RUN|PAUSE|CONT|NAME)/ && !/^[[:space:]]*--- PASS/ && !/^PASS$/' ; test "${PIPESTATUS[0]}" -eq 0
 
 # The Envoy adapters through a real Envoy (examples/envoy/envoy.yaml, both modes) in a container on the host network. The test
