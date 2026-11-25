@@ -142,7 +142,7 @@ func TestRemote(t *testing.T) {
 
 	var seenAuths int64
 	x := &target{
-		origin: origin, issuer: c.issuer, cookieName: "__Host-" + rules.Site, email: c.email,
+		origin: origin, issuer: c.issuer, cookieName: "__Host-" + rules.Site, email: c.email, idp: c.issuerID,
 		ctx:  oidc.ClientContext(context.Background(), client),
 		idle: rules.Idle, max: rules.Max, paths: paths,
 		signIn: func(t *testing.T, b *tab) { remoteSignIn(t, b, c) },

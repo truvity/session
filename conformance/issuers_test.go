@@ -2,6 +2,7 @@ package conformance_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
@@ -57,16 +58,37 @@ type twoIssuerScenario struct {
 	run  func(t *testing.T, x *twoIssuers)
 }
 
-// whoamiEmail is the e-mail address whoami names in the tab, or "" without a session.
-func whoamiEmail(t *testing.T, b *tab) string {
+// whoamiEmail is the e-mail address whoami names in the tab, or "" without a session; whoami must name the issuer's id too.
+func whoamiEmail(t *testing.T, b *tab, is standIssuer) string {
 	t.Helper()
 	r := b.fetch(t, "GET", core.PathWhoami, nil)
 	if r.Status != http.StatusOK {
 		return ""
 	}
-	var who struct{ Email string }
+	var who struct{ Idp, Email string }
 	_ = json.Unmarshal([]byte(r.Body), &who)
+	if who.Idp != is.id {
+		t.Fatalf("whoami names the issuer %q, want %q", who.Idp, is.id)
+	}
 	return who.Email
+}
+
+// identityIdp is the idp claim of the identity header the tab's identity route gets (decision 0035). The suite of one issuer
+// verifies the header's signature; here the claim is read.
+func identityIdp(t *testing.T, b *tab) string {
+	t.Helper()
+	r := b.fetch(t, "GET", "/legacy/x", nil)
+	id := decodeSeen(t, r.Body).Headers["X-Session-Identity"]
+	parts := strings.Split(strings.Join(id, ""), ".")
+	if r.Status != http.StatusOK || len(id) != 1 || len(parts) != 3 {
+		t.Fatalf("identity route: %d %q", r.Status, id)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	var c struct{ Idp string }
+	if err != nil || json.Unmarshal(payload, &c) != nil {
+		t.Fatalf("identity header %q", id[0])
+	}
+	return c.Idp
 }
 
 // exchangedBy says that the tab's exchange route gets a token of the audience billing that the issuer signed, and no other.
@@ -191,7 +213,7 @@ var twoIssuerScenarios = []twoIssuerScenario{
 		if loc := x.a.location(t); loc != x.st.origin+"/app/x?y=1" {
 			t.Fatalf("landed at %s", loc)
 		}
-		if e := whoamiEmail(t, x.a); e != x.corp.person.Email {
+		if e := whoamiEmail(t, x.a, x.corp); e != x.corp.person.Email {
 			t.Fatalf("whoami: %q", e)
 		}
 	}},
@@ -205,7 +227,7 @@ var twoIssuerScenarios = []twoIssuerScenario{
 		if loc := x.b.location(t); loc != x.st.origin+"/app/y" {
 			t.Fatalf("landed at %s", loc)
 		}
-		if e := whoamiEmail(t, x.b); e != x.partner.person.Email {
+		if e := whoamiEmail(t, x.b, x.partner); e != x.partner.person.Email {
 			t.Fatalf("whoami: %q", e)
 		}
 		if s := x.b.open(t, x.st.origin+core.PathSignIn+"?issuer=nobody&return_to=%2F"); s != http.StatusBadRequest {
@@ -223,6 +245,12 @@ var twoIssuerScenarios = []twoIssuerScenario{
 			if r := c.b.fetch(t, "GET", c.path, nil); r.Status != c.status {
 				t.Errorf("%s: %+v, want %d", c.path, r, c.status)
 			}
+		}
+	}},
+
+	{name: "the identity header names the session's issuer: idp and sub", run: func(t *testing.T, x *twoIssuers) {
+		if a, b := identityIdp(t, x.a), identityIdp(t, x.b); a != "corp" || b != "partner" {
+			t.Fatalf("idp %q and %q", a, b)
 		}
 	}},
 

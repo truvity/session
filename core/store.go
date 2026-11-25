@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"connectrpc.com/connect"
@@ -164,7 +163,7 @@ func (c *Core) loadKey(ctx context.Context, key []byte) (*Session, error) {
 		return nil, ErrNotFound
 	}
 	// A session of an issuer the site no longer names is no session (decision 0034).
-	if len(c.rules.Issuers) > 0 && !slices.Contains(c.rules.Issuers, s.Issuer) {
+	if len(c.rules.Issuers) > 0 && c.rules.issuerID(s.Issuer) == "" {
 		return nil, ErrNotFound
 	}
 	return s, nil

@@ -5,6 +5,12 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### The claim `idp`
+
+- Added (not breaking): the identity header (`X-Session-Identity`) and `/_session/whoami` carry `idp`, the site file's id of the session's issuer ([0035](docs/decisions/0035-the-idp-claim.md), owner decision D115 A), on every site, with one issuer too. An app that keys data by person uses `idp` and `sub` together.
+- Go API: `core.Rules.Issuers` is a list of `core.SiteIssuer` (the id and the identifier), no longer of identifiers.
+- The conformance suite checks `idp` in whoami and in the identity header, locally and through the remote runner (the id `ISSUER=` names).
+
 ### Several issuers per site
 
 - **Breaking, site file:** a site names its issuers in a list, `issuers` ([0034](docs/decisions/0034-several-issuers-per-site.md), owner decision D84 A). Each entry has an `id`, a `label`, the issuer identifier `issuer`, its `client` and its `scopes`. The top-level `issuer`, `client` and `scopes` are gone, and a file that still has them is refused with a message that names 0034: move them into one entry of `issuers` and give it an `id` and a `label`. With one issuer, behaviour is as before. No migration: nothing is deployed.

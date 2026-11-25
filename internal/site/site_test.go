@@ -55,7 +55,7 @@ func TestAGoodSiteFile(t *testing.T) {
 	}
 	if r.Site != "docs" || r.Idle != 20*time.Minute || r.Max != 4*time.Hour || len(r.Routes) != 3 ||
 		r.Routes[1].Unauthenticated != core.Unauthenticated401 || r.Routes[1].Name != "api" || f.Policy.Bundle != "policy-bundle" ||
-		len(r.Issuers) != 1 || r.Issuers[0] != "https://issuer.example.test/realms/docs" || f.Remember() != 0 {
+		len(r.Issuers) != 1 || r.Issuers[0] != (core.SiteIssuer{ID: "corp", Identifier: "https://issuer.example.test/realms/docs"}) || f.Remember() != 0 {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -114,7 +114,7 @@ func TestSeveralIssuersAndTheRememberedChoice(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(f.Issuers) != 2 || f.Issuers[1].ID != "partner" || f.Issuers[1].Label != "Example Partner" || f.Remember() != 720*time.Hour ||
-		len(r.Issuers) != 2 || r.Issuers[1] != "https://partner.example.test/realms/staff" {
+		len(r.Issuers) != 2 || r.Issuers[1] != (core.SiteIssuer{ID: "partner", Identifier: "https://partner.example.test/realms/staff"}) {
 		t.Fatalf("%+v %+v", f.Issuers, r.Issuers)
 	}
 }

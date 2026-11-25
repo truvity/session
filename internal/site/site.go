@@ -214,7 +214,7 @@ func (f *File) Rules() (core.Rules, error) {
 	}
 	r := core.Rules{Site: f.Site, Host: f.Host, Idle: idle, Max: maxLife}
 	for _, is := range f.Issuers {
-		r.Issuers = append(r.Issuers, is.Issuer)
+		r.Issuers = append(r.Issuers, core.SiteIssuer{ID: is.ID, Identifier: is.Issuer})
 	}
 	for _, rt := range f.Routes {
 		r.Routes = append(r.Routes, core.Route{Name: rt.Name, Prefix: rt.Match.Prefix, Exact: rt.Match.Exact,

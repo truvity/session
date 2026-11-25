@@ -68,7 +68,9 @@ func (ic *identityCache) put(key, header string, reuse, now time.Time) {
 func (c *Core) Origin() string { return "https://" + c.rules.Host }
 
 // IdentityClaims are the claims of an identity header for a session and a route, issued at now: iss the site's origin; aud the
-// route's audience or the site's origin; sub, name, email and groups from the session (groups is always a list); iat and exp.
+// route's audience or the site's origin; idp the site's id of the session's issuer (decision 0035: a subject is unique only within
+// its issuer, so an app keys a person by idp and sub); sub, name, email and groups from the session (groups is always a list); iat
+// and exp. idp is there with one issuer too.
 func (c *Core) IdentityClaims(s *Session, route Route, now time.Time) map[string]any {
 	aud := route.Audience
 	if aud == "" {
@@ -79,7 +81,7 @@ func (c *Core) IdentityClaims(s *Session, route Route, now time.Time) map[string
 		groups = []string{}
 	}
 	claims := map[string]any{
-		"iss": c.Origin(), "aud": aud, "sub": s.Subject, "groups": groups,
+		"iss": c.Origin(), "aud": aud, "idp": c.rules.issuerID(s.Issuer), "sub": s.Subject, "groups": groups,
 		"iat": now.Unix(), "exp": now.Add(c.rules.IdentityLifetime).Unix(),
 	}
 	if s.Claims.Name != "" {

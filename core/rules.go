@@ -98,18 +98,36 @@ type Rules struct {
 	// ExchangeTimeout bounds the exchange of one check (lock, refresh, issuer call, cache write); ExchangeSkew is taken off
 	// every token's expiry; IdentityLifetime is the life of a signed identity header.
 	ExchangeTimeout, ExchangeSkew, IdentityLifetime time.Duration
-	// Issuers are the identifiers of the site's issuers (decision 0034). A session whose issuer is not one of them is no session,
-	// so an issuer taken out of the site file ends its sessions at the next start. Empty accepts a session of any issuer.
-	Issuers []string
+	// Issuers are the site's issuers (decision 0034): the id of each in the site file and its identifier. A session whose issuer
+	// is not one of them is no session, so an issuer taken out of the site file ends its sessions at the next start. The id is
+	// the idp claim of the identity header (decision 0035). Empty accepts a session of any issuer, with an empty idp.
+	Issuers []SiteIssuer
 	// ErrorPage is the page a navigation gets when the issuer refuses the exchange for its route (decision 0005: a plain
 	// error page from a template for each site). Empty is the built-in page.
 	ErrorPage []byte
 }
 
+// SiteIssuer is one issuer of the site as the core knows it: its id in the site file and its identifier (the iss of its ID
+// tokens).
+type SiteIssuer struct {
+	ID         string
+	Identifier string
+}
+
+// issuerID is the site's id of the issuer identifier, or "" when the rules name no such issuer.
+func (r *Rules) issuerID(identifier string) string {
+	for _, is := range r.Issuers {
+		if is.Identifier == identifier {
+			return is.ID
+		}
+	}
+	return ""
+}
+
 // WithDefaults returns a copy of the rules with the defaults filled in.
 func (r Rules) WithDefaults() Rules {
 	r.Routes = append([]Route(nil), r.Routes...)
-	r.Issuers = append([]string(nil), r.Issuers...)
+	r.Issuers = append([]SiteIssuer(nil), r.Issuers...)
 	if r.Idle == 0 {
 		r.Idle = DefaultIdle
 	}
@@ -175,10 +193,10 @@ func (r Rules) Validate() error {
 	}
 	seenIssuer := map[string]bool{}
 	for i, iss := range r.Issuers {
-		if iss == "" || seenIssuer[iss] {
-			errs = append(errs, fmt.Errorf("issuers[%d]: an issuer identifier, each once", i))
+		if iss.ID == "" || iss.Identifier == "" || seenIssuer["id "+iss.ID] || seenIssuer[iss.Identifier] {
+			errs = append(errs, fmt.Errorf("issuers[%d]: an id and an issuer identifier, each once", i))
 		}
-		seenIssuer[iss] = true
+		seenIssuer["id "+iss.ID], seenIssuer[iss.Identifier] = true, true
 	}
 	if len(r.Routes) == 0 {
 		errs = append(errs, errors.New("routes: at least one route"))
