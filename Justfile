@@ -19,6 +19,16 @@ check: lint build test test-dynamodb test-keycloak test-envoy test-nginx test-co
 build:
     CGO_ENABLED=0 go build ./...
 
+# The executable of the image for one architecture, at dist/image/linux/<arch>/session, with its version (decision 0028): a
+# semantic version, which `session version` prints and the audit records name. The image workflow runs it for amd64 and arm64.
+build-image arch version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "{{ version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "build-image: {{ version }} is not a semantic version" >&2; exit 1; }
+    out="dist/image/linux/{{ arch }}"
+    mkdir -p "$out"
+    CGO_ENABLED=0 GOOS=linux GOARCH="{{ arch }}" go build -trimpath -ldflags "-s -w -X main.version={{ version }}" -o "$out/session" ./cmd/session
+
 # The unit tests: no container, no network. The store is the in-process test double. Verbose, so that a skip shows its reason.
 test:
     go test -race -count=1 -v ./... 2>&1 \

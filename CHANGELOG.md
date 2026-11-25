@@ -5,6 +5,10 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### Step 4: the image
+
+- **The image** `ghcr.io/truvity/session` ([0028](docs/decisions/0028-the-image.md), proposed): `.github/workflows/image.yaml` publishes `master-<commit>` on a push to `master` (version `0.0.0-master.<commit>`) and `X.Y.Z` on a tag `vX.Y.Z`, for `linux/amd64` and `linux/arm64`, from `just build-image`. A pull request publishes nothing.
+
 ### atoom 0.7.0: the key drivers are told no installation
 
 - **atoom 0.7.0** for every atoom module ([0027](docs/decisions/0027-atoom-0.7.0-and-the-audit-scope-flag.md)). `spike/` keeps the pins it ran with. `truvity/audit/emitter` stays at 0.19.0 and runs on it.
