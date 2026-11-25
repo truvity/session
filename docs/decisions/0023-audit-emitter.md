@@ -1,6 +1,6 @@
 # 0023. The emitter of truvity/audit: the choices of the switch from the stand-in
 
-Status: accepted, 2026-11-25 (owner decision on the pull request of the move to the emitter of truvity/audit)
+Status: accepted, 2026-11-25 (owner decision on the pull request of the move to the emitter of truvity/audit); partly superseded by [0024](0024-audit-transport-is-an-explicit-switch.md) (the rows "Local development only" and "Every named environment" of the transport, and the scope `local` for `--environment local`: the transport is the switch `--audit-stdout` or `--audit-socket`, never a value of `--environment`)
 Date: 2026-11-25
 
 Carries out what [0008](0008-audit.md) decided (security-audit events through the emitter of `truvity/audit`, over atoom's `transport` port, to the audit writer of the environment), now that `truvity/audit` 0.19.0 has the emitter in Go. It keeps every rule of 0008 and the fail-closed sign-in of [0015](0015-envoy-http-mode-csrf-header-and-step-2-choices.md).
