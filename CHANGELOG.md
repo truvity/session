@@ -15,6 +15,8 @@ What changed in session, newest first. session has no release yet; each entry na
 ### Step 4: the image
 
 - **The image** `ghcr.io/truvity/session` ([0028](docs/decisions/0028-the-image.md)): `.github/workflows/image.yaml` publishes `master-<commit>` on a push to `master` (version `0.0.0-master.<commit>`) and `X.Y.Z` on a tag `vX.Y.Z`, for `linux/amd64` and `linux/arm64`, from `just build-image`. A pull request publishes nothing.
+- **The remote runner** ([0029](docs/decisions/0029-the-remote-runner.md)): `just test-remote HOST=...` runs the remote-capable conformance scenarios against a deployed site, with the site file `conformance/remote/site.yaml`. Each scenario says where it runs; the local suite is unchanged.
+- **The test backend** `ghcr.io/truvity/session-echo` (`conformance/echo`), published beside `ghcr.io/truvity/session` with the same tag; the local stand serves the same handler.
 
 ### atoom 0.7.0: the key drivers are told no installation
 

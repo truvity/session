@@ -18,10 +18,16 @@ import (
 	"github.com/truvity/session/internal/kctest"
 )
 
+// localBrowserArgs are the browser's flags for the local stand: the site's name maps to the loopback, and the TLS front's test
+// certificate is accepted.
+func localBrowserArgs() []string {
+	return []string{"--host-resolver-rules=MAP " + siteName + " 127.0.0.1", "--ignore-certificate-errors"}
+}
+
 // startBrowser runs the headless browser (Chromium's headless shell, pinned by digest in the Justfile) in a container on the
-// host network, and returns a chromedp context attached to it. The browser maps the site's name to the loopback and accepts
-// the TLS front's test certificate. The container is removed at the end of the test.
-func startBrowser(t *testing.T) context.Context {
+// host network, with the extra flags given, and returns a chromedp context attached to it. The container is removed at the end
+// of the test.
+func startBrowser(t *testing.T, extra ...string) context.Context {
 	t.Helper()
 	image := os.Getenv("SESSION_TEST_BROWSER_IMAGE")
 	if image == "" {
@@ -29,11 +35,12 @@ func startBrowser(t *testing.T) context.Context {
 	}
 	port := freePort(t)
 	name := fmt.Sprintf("session-conformance-browser-%d", time.Now().UnixNano())
-	out, err := exec.Command("docker", "run", "-d", "--rm", "--name", name, "--network", "host", //nolint:gosec // G204: the suite's own image
+	args := []string{"run", "-d", "--rm", "--name", name, "--network", "host",
 		"--entrypoint", "/headless-shell/headless-shell", image,
 		"--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader",
-		"--remote-debugging-address=127.0.0.1", fmt.Sprintf("--remote-debugging-port=%d", port),
-		"--host-resolver-rules=MAP "+siteName+" 127.0.0.1", "--ignore-certificate-errors", "about:blank").CombinedOutput()
+		"--remote-debugging-address=127.0.0.1", fmt.Sprintf("--remote-debugging-port=%d", port)}
+	args = append(append(args, extra...), "about:blank")
+	out, err := exec.Command("docker", args...).CombinedOutput() //nolint:gosec // G204: the suite's own image
 	if err != nil {
 		t.Fatalf("docker run: %v %s", err, out)
 	}

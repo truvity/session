@@ -1,0 +1,37 @@
+# The site file of a deployed conformance site (decision 0029): the route table of the conformance suite, and lifetimes short
+# enough for the expiry scenarios to wait them out in real time. Copy it, set host and issuer to the deployment's, and install
+# it as the site's site.jws (examples/site.yaml says how). Every route sends to the test backend, ghcr.io/truvity/session-echo.
+# The remote runner (`just test-remote`) reads this file, or the copy SITE_FILE names, for the site's name and lifetimes;
+# conformance/remote_test.go checks that its routes are the suite's.
+#
+# The realm of the issuer needs: the client session-docs (private_key_jwt, the redirect https://<host>/_session/callback, the
+# post-logout redirect https://<host>/), a client billing that session-docs may exchange to, no client no-such-client, and, for a
+# brokered sign-in, the identity provider the runner names with IDP, whose first sign-in asks nothing (no profile review).
+site: docs
+host: docs.example.com
+issuer: https://idp.example.com/realms/session-conformance
+client:
+  id: session-docs
+  auth: private_key_jwt
+scopes: [openid, profile, email]
+session:
+  idle: 90s                    # longer than the one-minute touch interval, or a session in use would still go idle
+  max: 3m                      # shorter than Keycloak's five-minute access tokens: the run never refreshes
+routes:
+  - name: assets
+    match: { prefix: /assets/ }
+    mode: public
+  - name: billing
+    match: { prefix: /api/billing/ }
+    mode: exchange
+    audience: billing
+  - name: nowhere              # an exchange the issuer refuses: the realm has no client no-such-client
+    match: { prefix: /api/nowhere/ }
+    mode: exchange
+    audience: no-such-client
+  - name: legacy
+    match: { prefix: /legacy/ }
+    mode: identity-header
+    audience: legacy-app
+  - match: { prefix: / }
+    mode: session
