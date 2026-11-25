@@ -65,7 +65,21 @@ type SignIn struct {
 type Client struct {
 	ID   string `yaml:"id"`
 	Auth string `yaml:"auth"`
+	// PAR is whether the sign-in at this issuer uses a pushed authorization request (RFC 9126, S3): "required" (the default,
+	// also when empty) or "unavailable", for an issuer that has no PAR endpoint, such as sluis v1 (decision 0033). With
+	// "unavailable" the authorization request goes on the browser's URL; session refuses to start when the issuer's discovery
+	// does offer PAR, so the setting never turns PAR off at an issuer that has it.
+	PAR string `yaml:"par"`
 }
+
+// The values of client.par.
+const (
+	PARRequired    = "required"
+	PARUnavailable = "unavailable"
+)
+
+// WithoutPAR reports that the client signs in at its issuer without a pushed authorization request.
+func (c Client) WithoutPAR() bool { return c.PAR == PARUnavailable }
 
 // Session holds the lifetimes.
 type Session struct {
@@ -183,6 +197,10 @@ func (f *File) checkIssuers() []error {
 		}
 		if is.Client.Auth != "private_key_jwt" {
 			errs = append(errs, fmt.Errorf("%s.client.auth %q: private_key_jwt (S3)", at, is.Client.Auth))
+		}
+		if is.Client.PAR != "" && is.Client.PAR != PARRequired && is.Client.PAR != PARUnavailable {
+			errs = append(errs, fmt.Errorf("%s.client.par %q: %s (the default) or %s (decision 0033)", at, is.Client.PAR,
+				PARRequired, PARUnavailable))
 		}
 		if !slices.Contains(is.Scopes, "openid") {
 			errs = append(errs, fmt.Errorf("%s.scopes: must include openid", at))

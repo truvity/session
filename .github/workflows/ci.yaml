@@ -42,8 +42,9 @@ jobs:
       - run: devbox run -- just build test
 
   # The tests that need a container: the core on atoom's store/dynamodb driver against DynamoDB Local, the audit switch
-  # --audit-nats against a NATS server with JetStream, the sign-in handler against a test Keycloak, the Envoy adapters through a
-  # real Envoy, and the nginx adapter through a real nginx.
+  # --audit-nats against a NATS server with JetStream, the sign-in handler against a test Keycloak and against sluis v1 (decision
+  # 0033; skipped while its image pin in the Justfile is a placeholder), the Envoy adapters through a real Envoy, and the nginx
+  # adapter through a real nginx.
   integration:
     name: integration (containers)
     runs-on: ubuntu-24.04
@@ -53,7 +54,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: truvity/ci-actions/setup-devbox@82e404675ef3f826755e2939d1072cddcd07ed26 # v3.9.0
-      - run: devbox run -- just test-dynamodb test-nats test-keycloak test-envoy test-nginx
+      - run: devbox run -- just test-dynamodb test-nats test-keycloak test-sluis-v1 test-envoy test-nginx
 
   # The conformance suite: the same browser scenarios through Envoy (gRPC and HTTP) and nginx, in a headless browser against a
   # test Keycloak. Its own job, so it runs beside the integration job rather than after it.

@@ -43,6 +43,9 @@ type Issuer struct {
 	URL      string
 	ClientID string
 	Scopes   []string
+	// WithoutPAR sends the authorization request on the browser's URL instead of by PAR (decision 0033). New refuses it when
+	// the issuer's discovery offers PAR, so it never turns PAR off at an issuer that has it.
+	WithoutPAR bool
 }
 
 // Options configure the handler.
@@ -90,7 +93,8 @@ type Handler struct {
 	log     *slog.Logger
 }
 
-// New reads each issuer's discovery document and returns the handler. Every issuer must offer PAR (S3).
+// New reads each issuer's discovery document and returns the handler. Every issuer must offer PAR (S3), except one whose client
+// is set to sign in without it (decision 0033), which must offer none.
 func New(ctx context.Context, o Options) (*Handler, error) {
 	if o.HTTP == nil {
 		o.HTTP = &http.Client{Timeout: 10 * time.Second}
@@ -115,8 +119,16 @@ func New(ctx context.Context, o Options) (*Handler, error) {
 		if err := p.Claims(&e.endpoints); err != nil {
 			return nil, err
 		}
-		if e.endpoints.PAR == "" {
-			return nil, fmt.Errorf("signin: the issuer %s offers no pushed authorization request endpoint (S3 needs PAR)", is.ID)
+		switch {
+		case is.WithoutPAR && e.endpoints.PAR != "":
+			return nil, fmt.Errorf("signin: the issuer %s offers a pushed authorization request endpoint, and its client.par is "+
+				"unavailable: remove the setting, PAR is used where the issuer has it (decision 0033)", is.ID)
+		case is.WithoutPAR:
+			o.Log.Warn("signin: the issuer has no pushed authorization request endpoint; its sign-in sends the request on the "+
+				"browser's URL (client.par: unavailable, decision 0033)", "issuer", is.ID)
+		case e.endpoints.PAR == "":
+			return nil, fmt.Errorf("signin: the issuer %s offers no pushed authorization request endpoint (S3 needs PAR; "+
+				"client.par: unavailable for an issuer that has none, decision 0033)", is.ID)
 		}
 		e.idTokens = p.VerifierContext(oidc.ClientContext(context.Background(), o.HTTP), &oidc.Config{ClientID: is.ClientID})
 		e.logouts = p.VerifierContext(oidc.ClientContext(context.Background(), o.HTTP), &oidc.Config{ClientID: is.ClientID})
@@ -247,15 +259,24 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		"code_challenge":        {oauth2.S256ChallengeFromVerifier(verifier)},
 		"code_challenge_method": {"S256"},
 	}
-	var par struct {
-		RequestURI string `json:"request_uri"`
+	q := url.Values{"client_id": {is.ClientID}}
+	if is.WithoutPAR {
+		// Decision 0033: the issuer has no PAR. The parameters go on the URL; the callback's checks (the binding cookie,
+		// state once, nonce, PKCE, iss, the code redeemed with the client's assertion) are the same.
+		for k, v := range params {
+			q[k] = v
+		}
+	} else {
+		var par struct {
+			RequestURI string `json:"request_uri"`
+		}
+		status, err := h.postForm(ctx, is, is.endpoints.PAR, params, &par)
+		if err != nil || (status != http.StatusCreated && status != http.StatusOK) || par.RequestURI == "" {
+			h.fail(w, http.StatusBadGateway, "par", fmt.Sprintf("status %d", status))
+			return
+		}
+		q.Set("request_uri", par.RequestURI)
 	}
-	status, err := h.postForm(ctx, is, is.endpoints.PAR, params, &par)
-	if err != nil || (status != http.StatusCreated && status != http.StatusOK) || par.RequestURI == "" {
-		h.fail(w, http.StatusBadGateway, "par", fmt.Sprintf("status %d", status))
-		return
-	}
-	q := url.Values{"client_id": {is.ClientID}, "request_uri": {par.RequestURI}}
 	noStore(w)
 	w.Header().Add("Set-Cookie", h.core.BindingCookie(binding))
 	http.Redirect(w, r, is.provider.Endpoint().AuthURL+"?"+q.Encode(), http.StatusFound)

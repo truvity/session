@@ -396,7 +396,8 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 func (a *app) signIn(ctx context.Context) error {
 	var issuers []signin.Issuer
 	for _, is := range a.site.Issuers {
-		issuers = append(issuers, signin.Issuer{ID: is.ID, Label: is.Label, URL: is.Issuer, ClientID: is.Client.ID, Scopes: is.Scopes})
+		issuers = append(issuers, signin.Issuer{ID: is.ID, Label: is.Label, URL: is.Issuer, ClientID: is.Client.ID, Scopes: is.Scopes,
+			WithoutPAR: is.Client.WithoutPAR()})
 	}
 	h, err := signin.New(ctx, signin.Options{Core: a.core, Issuers: issuers, Remember: a.site.Remember(),
 		Signer: a.signer, Identity: &a.ident})

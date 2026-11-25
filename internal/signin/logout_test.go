@@ -28,6 +28,7 @@ type fakeIssuer struct {
 	mu         sync.Mutex
 	revoked    []url.Values
 	pars       []url.Values // the pushed authorization requests, for the tests of several issuers
+	noPAR      bool         // the discovery document names no PAR endpoint, as sluis v1's (decision 0033)
 }
 
 func newFakeIssuer(t *testing.T, revocation bool, status int) *fakeIssuer {
@@ -39,6 +40,9 @@ func newFakeIssuer(t *testing.T, revocation bool, status int) *fakeIssuer {
 			"issuer": f.srv.URL, "authorization_endpoint": f.srv.URL + "/auth", "token_endpoint": f.srv.URL + "/token",
 			"jwks_uri": f.srv.URL + "/jwks", "pushed_authorization_request_endpoint": f.srv.URL + "/par",
 			"end_session_endpoint": f.srv.URL + "/logout", "id_token_signing_alg_values_supported": []string{"ES256"},
+		}
+		if f.noPAR {
+			delete(d, "pushed_authorization_request_endpoint")
 		}
 		if f.revocation {
 			d["revocation_endpoint"] = f.srv.URL + "/revoke"
@@ -80,9 +84,27 @@ type logoutSite struct {
 
 func newLogoutSite(t *testing.T, f *fakeIssuer) *logoutSite {
 	t.Helper()
-	mem := storetest.New(nil)
-	items, stop := mem.Client()
-	t.Cleanup(stop)
+	c, h, err := newSignIn(t, f, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &logoutSite{core: c, handler: h, issuer: f}
+}
+
+// newSignIn is the sign-in handler of a site whose one issuer is f, signing in without PAR when withoutPAR is set.
+func newSignIn(t *testing.T, f *fakeIssuer, withoutPAR bool) (*core.Core, *signin.Handler, error) {
+	t.Helper()
+	return newSignInAt(t, f.srv.URL, withoutPAR, newTestSigners(t))
+}
+
+// testSigners are a site's two signers on software keys in a private directory of the test.
+type testSigners struct {
+	client, identity signin.Signer
+	sealer           core.Sealer
+}
+
+func newTestSigners(t *testing.T) testSigners {
+	t.Helper()
 	keyDir := t.TempDir()
 	if err := os.Chmod(keyDir, 0o700); err != nil { //nolint:gosec // G302: the key driver wants its state directory private
 		t.Fatal(err)
@@ -100,18 +122,26 @@ func newLogoutSite(t *testing.T, f *fakeIssuer) *logoutSite {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := core.New(core.Options{Items: items, Seal: blocks.Sealer, Rules: core.Rules{Site: "docs", Host: "docs.example.test",
+	return testSigners{client: signer, identity: identity, sealer: blocks.Sealer}
+}
+
+// newSignInAt is the sign-in handler of the site docs.example.test whose one issuer is issuerURL, with the client session-docs.
+func newSignInAt(t *testing.T, issuerURL string, withoutPAR bool, keys testSigners) (*core.Core, *signin.Handler, error) {
+	t.Helper()
+	mem := storetest.New(nil)
+	items, stop := mem.Client()
+	t.Cleanup(stop)
+	c, err := core.New(core.Options{Items: items, Seal: keys.sealer, Rules: core.Rules{Site: "docs", Host: "docs.example.test",
 		Routes: []core.Route{{Prefix: "/", Mode: core.ModeSession}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	identity := keys.identity
 	h, err := signin.New(context.Background(), signin.Options{Core: c,
-		Issuers: []signin.Issuer{{ID: "corp", Label: "Example Corp", URL: f.srv.URL, ClientID: "session-docs", Scopes: []string{"openid"}}},
-		Signer:  signer, Identity: &identity})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &logoutSite{core: c, handler: h, issuer: f}
+		Issuers: []signin.Issuer{{ID: "corp", Label: "Example Corp", URL: issuerURL, ClientID: "session-docs", Scopes: []string{"openid"},
+			WithoutPAR: withoutPAR}},
+		Signer: keys.client, Identity: &identity})
+	return c, h, err
 }
 
 // logout posts to the logout path with the CSRF headers, as the browser helper does, and returns the answer and its address.
