@@ -27,6 +27,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0020](0020-conformance-suite.md) | The conformance suite: the choices of step 3.4 |
 | [0021](0021-atoom-policy-loader-and-seal-block.md) | atoom's policy loader and seal block: the choices of the move to atoom 0.5.0 |
 | [0022](0022-atoom-token-block.md) | atoom's token block: the choices of the move to atoom 0.6.0 |
+| [0023](0023-audit-emitter.md) | The emitter of truvity/audit: the choices of the switch from the stand-in |
 
 ## How the records are kept
 

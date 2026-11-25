@@ -5,6 +5,16 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### Step 3.7: the emitter of truvity/audit
+
+- **Security-audit records go through the emitter of `truvity/audit`** (`github.com/truvity/audit/emitter` 0.19.0, [0023](docs/decisions/0023-audit-emitter.md), proposed), over atoom's `transport` port, in place of the stand-in. Every atoom module stays at 0.6.0; `transport` and `socket` are added.
+- **Breaking, audit:** each record is an OCSF 1.9.0 record in RFC 8785 canonical JSON, of session's action table: `sign-in` (with its failure, the old `sign-in-failed`), `logout`, `back-channel-logout`, `denied` (API Activity, with the policy decision), `token-exchange` and `refresh` (the old `refresh-failed`). The site, the issuer, the route and the audience are in `unmapped.session`; a policy denial's digest is `policy.version`, with the bundle's name as `policy.uid`. A reason that is not a closed word is `unrecognised`.
+- **Breaking, audit:** the subject is never in a record: it is a pseudonym, `p1.<YYYYMM>.<value>`, made by the seal block under the new keyed-hash purpose `pseudonym`, one data key a month, label `session-pseudonym-v1`.
+- A sign-in waits until the transport says its record is durable, and fails closed with 503 when it does not; every other event is best effort, bounded by a second, counted in `session_audit_dropped_total` when lost, and reported by the emitter's next record.
+- New: `session serve --audit-socket PATH`, the emit socket of the environment's transport driver (atoom's `transport-spool`). Without it, a driver in the process writes each record as one JSON line to stdout; `--environment production` refuses to start without it.
+- New: `internal/audit` holds session's action table and its schemas (`Table`, `Schemas`), the client of an emit socket and `Lines`; the seal block's `Pseudonym`; the conformance suite runs the emitter and checks its records after each host.
+- The default build's version is `0.0.0-dev` (it was `dev`): the records name it, and the writer takes only a semantic version.
+
 ### atoom 0.6.0: the token block
 
 - **atoom 0.6.0** for every atoom module, and one new one: `blocks/token` ([0022](docs/decisions/0022-atoom-token-block.md)). `spike/` keeps the pins it ran with.

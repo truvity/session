@@ -15,7 +15,7 @@ Status: being built (step 3 of the [plan](docs/design.md#16-status-and-next-step
 | `core/` | The session core: records, cookie, idle and absolute expiry, logout pointers and tombstones, the exchange cache and lock, the identity header, the check |
 | `cmd/session` | The service: `session serve`, `session check --site FILE` |
 | `internal/signin` | The sign-in handler: login (PAR, PKCE, `private_key_jwt` through the key port), callback, logout, back-channel logout, whoami, jwks; the JWT signer over the key port |
-| `internal/audit` | The stand-in for truvity/audit's emitter: security events as JSON lines |
+| `internal/audit` | truvity/audit's emitter over atoom's transport port: session's action table, the pseudonyms, the transport client and a local driver of JSON lines |
 | `internal/kctest` | The test Keycloak: realms through the admin API, a browser at the login form |
 | `internal/envoy` | The Envoy adapters: gRPC (`envoy.service.auth.v3.Authorization`, preferred) and HTTP external authorisation |
 | `internal/nginx` | The nginx adapter: the check for `auth_request`, answering every refusal as a 401 with markers |

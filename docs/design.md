@@ -278,7 +278,7 @@ Design consequences ([0010](decisions/0010-logout-pointer-items.md)):
 | The client assertion, the identity header, the JWKS | `token` block (`blocks/token`) | Over the seal block |
 | Site file and policy bundle | `source` port | `source/file` in Go |
 | Who may reach a route | `cedar-go` in-process, through atoom's loader `policy`, with its signed bundle, loading rules and decision test set | The signed policy bundle |
-| Security-audit events | The emitter of `truvity/audit` over atoom's `transport` port | To the audit writer of the environment |
+| Security-audit events | The emitter of `truvity/audit` (`github.com/truvity/audit/emitter`) over atoom's `transport` port | To the audit writer of the environment, through the emit socket of its transport driver (`transport-spool`); a driver of JSON lines on stdout without one |
 
 Every port, and the `seal` and `token` blocks, is called through its generated ConnectRPC client, with the driver mounted on an in-memory transport. atoom is pinned at 0.6.0, one version for every atoom module. Cedar is the one exception: a library by design ([0007](decisions/0007-policy.md)). The deadline and the correlation id travel with every call.
 
@@ -321,6 +321,8 @@ The signed policy bundle (a JWS of the kind `PolicyBundle`, ES384) is read throu
 
 `session` emits security-audit events for sign-ins, logouts, refresh failures, token exchanges and denials. A check never waits on them. A sign-in completes only after its event is accepted by the transport; while the transport is down, a sign-in fails closed with 503 in the first version ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)). When the transport is down, checks keep being answered, and dropped events are counted and raise an alert. Allowed requests are counted as metrics. Usage and billing records are never emitted ([0008](decisions/0008-audit.md)).
 
+The emitter of `truvity/audit` runs in session's process behind `core.Auditor` ([0023](decisions/0023-audit-emitter.md), proposed). Each event is an OCSF 1.9.0 record of session's action table (`sign-in`, `logout`, `back-channel-logout`, `denied`, `token-exchange`, `refresh`; a failure is the action's outcome), checked against the schema of its action before it leaves. The person is a pseudonym, `p1.<YYYYMM>.<value>`, a keyed hash that the seal block makes under the key of the month (the purpose `pseudonym`, label `session-pseudonym-v1`); the site, the issuer, the route and the audience are in the product object `unmapped.session`, and a policy denial carries the bundle's name and digest. A sign-in waits until the transport says its record is durable; every other event is best effort, bounded by a second, and a lost one is counted and reported by the next record. `--audit-socket` names the emit socket of the environment's transport driver (atoom's `transport-spool`, whose consumer is the writer); without it, a driver in the process writes each record as one JSON line to stdout, which production refuses.
+
 ## 10. Site configuration
 
 One file per site. The schema is part of the repository, and `session check` validates it (the generator turns it into proxy config). The example shows the planned shape. The schema is the contract once it exists.
@@ -347,8 +349,6 @@ policy:
       oSq/SzJQbWqYGN9urpU1EFl6ypRKdcc8olyuacxsRDML4ZGtDcLA2gcsTUXZGfvL
       hkPfEOilNuWdXkXOQrrZsO/Retc6BTZk
       -----END PUBLIC KEY-----
-audit:
-  transport: { driver: spool, path: /var/spool/session-audit }
 routes:
   - match: { prefix: /assets/ }
     mode: public
@@ -366,7 +366,6 @@ routes:
 | `client` | The issuer client, and where its key lives (a key driver) |
 | `session` | The idle and the maximum lifetime |
 | `policy` | The name of the signed bundle (a document of the source port) and the one key that verifies it: its `kid` and its P-384 public key as PEM. Without a bundle, the route table decides alone |
-| `audit` | Where the security-audit events go: the transport driver and its settings |
 | `routes` | The route table |
 
 | Route mode | Allow answer carries |
@@ -376,7 +375,7 @@ routes:
 | `exchange` | `Authorization: Bearer` with the token for the audience (`X-Session-Token` on the API Gateway HTTP API) |
 | `identity-header` | A signed identity header, `X-Session-Identity`. The route's optional `audience` is its `aud` |
 
-Routes are matched in order. The first match wins; a path that matches no route is a 404 `no_route`. A route of mode `exchange` must name its `audience`; the modes `public` and `session` take none. `error_page` names a document of the source port: the HTML page a navigation gets when an exchange is refused ([0016](decisions/0016-exchange-client-and-identity-header.md)). The site file is read through the `source` port as the document `site` (the file `site.jws`), the policy bundle as `policy-bundle` (`policy-bundle.jws`). The check matches on the normalised path, and the host proxy must route on the same normalised path (see the threat model). On Lambda the site file and the policy bundle are the configuration layer ([0012](decisions/0012-lambda.md)). Which store and key drivers run is a start-up setting, not part of the site file.
+Routes are matched in order. The first match wins; a path that matches no route is a 404 `no_route`. A route of mode `exchange` must name its `audience`; the modes `public` and `session` take none. `error_page` names a document of the source port: the HTML page a navigation gets when an exchange is refused ([0016](decisions/0016-exchange-client-and-identity-header.md)). The site file is read through the `source` port as the document `site` (the file `site.jws`), the policy bundle as `policy-bundle` (`policy-bundle.jws`). The check matches on the normalised path, and the host proxy must route on the same normalised path (see the threat model). On Lambda the site file and the policy bundle are the configuration layer ([0012](decisions/0012-lambda.md)). Which store and key drivers run, and where the security-audit records go (`--audit-socket`, [0023](decisions/0023-audit-emitter.md)), is a start-up setting, not part of the site file.
 
 ## 11. Repository contents
 
@@ -468,10 +467,11 @@ Not yet in the suite: the API Gateway authorizer (step 5, in a real account), a 
 | The conformance suite, the choices of step 3.4 | [0020](decisions/0020-conformance-suite.md) |
 | atoom 0.5.0: the policy loader and the seal block | [0021](decisions/0021-atoom-policy-loader-and-seal-block.md) |
 | atoom 0.6.0: the token block | [0022](decisions/0022-atoom-token-block.md) |
+| The emitter of truvity/audit, the choices of step 3.7 | [0023](decisions/0023-audit-emitter.md) |
 
 ## 16. Status and next steps
 
-Built: nothing in production, so nothing sealed under an earlier format has to be read again. The first spike ran the check core, Envoy, nginx and the Lambda handlers on sample events against Keycloak and DynamoDB Local ([findings](archive/spike-2026-11-18.md), [code](../spike/)). session runs on atoom 0.6.0: the `store`, `key` and `source` ports and their drivers, `key/route`, the `seal` and `token` blocks and the Cedar loader `policy` ([0021](decisions/0021-atoom-policy-loader-and-seal-block.md), [0022](decisions/0022-atoom-token-block.md)).
+Built: nothing in production, so nothing sealed under an earlier format has to be read again. The first spike ran the check core, Envoy, nginx and the Lambda handlers on sample events against Keycloak and DynamoDB Local ([findings](archive/spike-2026-11-18.md), [code](../spike/)). session runs on atoom 0.6.0: the `store`, `key` and `source` ports and their drivers, `key/route`, the `seal` and `token` blocks and the Cedar loader `policy` ([0021](decisions/0021-atoom-policy-loader-and-seal-block.md), [0022](decisions/0022-atoom-token-block.md)), and its security-audit records go through the emitter of `truvity/audit` 0.19.0 over the `transport` port ([0023](decisions/0023-audit-emitter.md)).
 
 The fit spike ran the check core on atoom's `store/dynamodb`, `key/software` and `source/file` in-process, and the authorizer events through the Lambda Web Adapter ([findings](spike-2026-11-22.md), [code](../spike/)). The real-AWS checks are a script for the maintainer, not yet run.
 
@@ -479,13 +479,14 @@ Planned, in order:
 
 1. **Fit spike**, about a day (done, not yet in an account: [findings](spike-2026-11-22.md)): the check core on atoom 0.2.0's `store/dynamodb` and `key` drivers mounted in-process; authorizer events through the Lambda Web Adapter; the short check in a real AWS account that the first spike could not make (section 17).
 2. **Check core, sign-in handler and Envoy adapters** against Keycloak, about four to five days. The broker rules and the browser library come from the group SSO reference stand where they fit.
-3. **nginx adapter, AWS KMS, the exchange client and the conformance suite**, with the stand's scenarios and Keycloak findings, about three to four days. It needed from atoom the `seal` block, the Go `source/file` driver, the Cedar loader with its decision test set and the durability field, all now built; it still needs from `truvity/audit` the emitter in Go. One pull request for each part:
+3. **nginx adapter, AWS KMS, the exchange client and the conformance suite**, with the stand's scenarios and Keycloak findings, about three to four days. It needed from atoom the `seal` block, the Go `source/file` driver, the Cedar loader with its decision test set and the durability field, and from `truvity/audit` the emitter in Go, all now built. One pull request for each part:
    1. **The exchange client and the identity header** (built, [0016](decisions/0016-exchange-client-and-identity-header.md)): the route modes `exchange` and `identity-header`, tested against Keycloak's standard token exchange and through Envoy. Needs nothing new from atoom.
    2. **The nginx adapter** (built, [0018](decisions/0018-nginx-adapter.md)): `auth_request` with the markers of [0011](decisions/0011-host-adapter-rules.md), the example config `examples/nginx/nginx.conf`, tested through nginx 1.30 as it is.
    3. **AWS KMS** (built, [0019](decisions/0019-signing-keys-on-aws-kms.md)): the `key/awskms` driver as a start-up setting for each of the client assertion and the identity header (`--key PURPOSE=awskms[:KEY]`), tested on an in-process KMS double and against Keycloak. Needs nothing newer from atoom: `key/awskms` 0.3.0. The real-AWS check is part of step 5.
    4. **The conformance suite** (built, [0020](decisions/0020-conformance-suite.md)): `conformance/`, `just test-conformance`, in CI. Chromium's headless shell, driven by chromedp, runs the same scenarios through Envoy over gRPC, Envoy over HTTP and nginx, each with its example as it is, against Keycloak, and asserts each host's documented answer where the hosts differ. API Gateway and the Lambda authorizer cannot run without AWS: their run of the scenarios is part of the real-AWS check of step 5.
    5. **atoom 0.5.0** (built, [0021](decisions/0021-atoom-policy-loader-and-seal-block.md)): every atoom pin at 0.5.0; atoom's policy loader in place of the interim one (a signed bundle, one pinned key, strict schema validation, the SHA-384 digest); atoom's `seal` block in place of the local sealer (the wrapping key on the key port, the wraps in session's store). The sealed format changed; nothing was deployed.
    6. **atoom 0.6.0** (built, [0022](decisions/0022-atoom-token-block.md)): every atoom pin at 0.6.0; atoom's `token` block in place of session's own JWS code for the client assertion, the identity header and `/_session/jwks`, over the seal block, with `key/route` in front of the key drivers. Issuers and apps see the same headers, claims and keys.
+   7. **The emitter of `truvity/audit`** (built, [0023](decisions/0023-audit-emitter.md), proposed): `github.com/truvity/audit/emitter` 0.19.0 in place of the stand-in, with every atoom pin still at 0.6.0. session's action table and schemas in code, the pseudonyms made by the seal block under a key for each month, a blocking emit for a sign-in and best effort for the rest; `--audit-socket` to the emit socket of the environment's transport driver, and a driver of JSON lines on stdout for a run without one, refused in production.
 4. **First version** for the first sites.
 5. **Lambda:** the sign-in handler behind the Web Adapter and the authorizer as a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)), HTTP API first, then REST API. The real-AWS check runs the conformance scenarios through API Gateway ([0020](decisions/0020-conformance-suite.md)).
 6. **sluis v2 as an issuer** once PAR and `private_key_jwt` land there. Sites on sluis v1 wait for v2.

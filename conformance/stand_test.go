@@ -1,6 +1,7 @@
 package conformance_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,6 +29,7 @@ import (
 
 	"github.com/truvity/session/core"
 	"github.com/truvity/session/internal/atoomx"
+	"github.com/truvity/session/internal/audit"
 	"github.com/truvity/session/internal/envoy"
 	"github.com/truvity/session/internal/exchange"
 	"github.com/truvity/session/internal/kctest"
@@ -69,6 +72,43 @@ type stand struct {
 	host   string       // docs.example.test:PORT
 	proxy  string       // http://127.0.0.1:PORT, the host proxy's plain listener
 	ports  map[string]int
+	audit  *records // the security-audit records, written by the emitter of truvity/audit through the driver of JSON lines
+}
+
+// records is the writer of the driver of JSON lines: what the stand's emitter delivered, one record a line.
+type records struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (r *records) Write(p []byte) (int, error) { r.mu.Lock(); defer r.mu.Unlock(); return r.b.Write(p) }
+
+// check says that every record is JSON and names no one in clear, and that the scenarios wrote every action they reach.
+func (r *records) check(t *testing.T, p kctest.Person) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	seen := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSuffix(r.b.String(), "\n"), "\n") {
+		var rec struct {
+			Metadata struct {
+				EventCode string `json:"event_code"`
+			} `json:"metadata"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("not a record: %q", line)
+		}
+		if strings.Contains(line, p.Username) || strings.Contains(line, p.Email) {
+			t.Fatalf("a record names the person: %s", line)
+		}
+		seen[rec.Metadata.EventCode] = true
+	}
+	for _, a := range []string{audit.ActionSignIn, audit.ActionDenied, audit.ActionTokenExchange, audit.ActionLogout,
+		audit.ActionBackChannelLogout, audit.ActionRefresh} {
+		if !seen[a] {
+			t.Errorf("no record of %s; seen %v", a, seen)
+		}
+	}
 }
 
 func freePort(t *testing.T) int {
@@ -163,7 +203,14 @@ func newStand(t *testing.T, kc *kctest.Keycloak) *stand {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := core.New(core.Options{Items: items, Seal: sealer, Issuer: issuer, Identity: identity,
+	st.audit = &records{}
+	tr, stopAudit := audit.NewLines(st.audit).Mount()
+	t.Cleanup(stopAudit)
+	auditor, err := audit.New(audit.Options{Transport: tr, Pseudonyms: sealer, Release: "0.0.0-test", Scope: "development"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := core.New(core.Options{Items: items, Seal: sealer, Issuer: issuer, Identity: identity, Audit: auditor,
 		Now:   func() time.Time { return time.Now().Add(time.Duration(st.ahead.Load())) },
 		Rules: core.Rules{Site: "docs", Host: st.host, Routes: routes, StoreTimeout: 500 * time.Millisecond}})
 	if err != nil {

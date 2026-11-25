@@ -8,8 +8,8 @@
 // (decision 0022).
 //
 // session declares its purposes to the block (Purposes) and hands it its rules (Rules): session's own code is the block's one
-// caller, and it may seal, open and hash under its own purposes in the installation's own scope, sign and read the public key
-// under its token purposes, and nothing else.
+// caller, and it may seal, open and hash under its own purposes in the installation's own scope (the audit emitter's pseudonyms
+// among the hashes, decision 0023), sign and read the public key under its token purposes, and nothing else.
 package sealer
 
 import (
@@ -38,6 +38,10 @@ import (
 // WrappingPurpose is the key port's purpose of the wrapping key: atoom's default name, ECDH-P384.
 const WrappingPurpose = seal.DefaultWrappingPurpose
 
+// PseudonymPurpose is the keyed-hash purpose of the pseudonyms of the security-audit records (decision 0023): truvity/audit's
+// name, whose generation is the caller's, the epoch YYYYMM of the record (audit record 0011, "Pseudonyms").
+const PseudonymPurpose = "pseudonym"
+
 // Purposes is session's declaration to the block: its sealing and keyed-hash purposes, then a signing purpose for each token
 // purpose (token.SealPurposes). A seal purpose's code is in every envelope it seals, so a code is never given to another purpose.
 func Purposes(tokens ...token.Purpose) ([]seal.Purpose, error) {
@@ -47,6 +51,7 @@ func Purposes(tokens ...token.Purpose) ([]seal.Purpose, error) {
 		{Name: core.PurposeExchanged, Use: seal.UseSeal, Code: 3},
 		{Name: core.PurposeSessionKey, Use: seal.UseMac},
 		{Name: core.PurposeLookupKey, Use: seal.UseMac},
+		{Name: PseudonymPurpose, Use: seal.UseMac, CallerGeneration: true},
 	}
 	if len(tokens) == 0 {
 		return out, nil
@@ -197,6 +202,16 @@ func (s *Sealer) Open(ctx context.Context, p string, aad, sealed []byte) ([]byte
 		return pts[0], nil
 	}
 	return nil, errors.New("sealer: the block answered an open of one item with another count")
+}
+
+// Pseudonym is the keyed hash of a pseudonym's input under the data key of the epoch (generation) of the purpose pseudonym, with the
+// audit emitter's domain label bound in: HMAC-SHA384, 48 bytes. The installation's own scope: session names no tenant.
+func (s *Sealer) Pseudonym(ctx context.Context, label string, input []byte, generation uint32) ([]byte, error) {
+	res, err := s.C.Mac(ctx, connect.NewRequest(&sealv1.MacRequest{Purpose: PseudonymPurpose, Label: label, Input: input, Generation: generation}))
+	if err != nil {
+		return nil, err
+	}
+	return res.Msg.GetMac(), nil
 }
 
 // Mac is the keyed hash of data under the purpose: HMAC-SHA384, 48 bytes.
