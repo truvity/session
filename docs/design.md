@@ -476,6 +476,7 @@ Not yet in the suite: the API Gateway authorizer (step 5, in a real account), a 
 | The image, and what else a deployed first site needs from this repository | [0028](decisions/0028-the-image.md) |
 | The remote runner: the conformance scenarios against a deployed site, and the echo test backend | [0029](decisions/0029-the-remote-runner.md) |
 | The Lambda handlers, the choices of step 5 before atoom's B9 | [0030](decisions/0030-lambda-handlers-step-5-choices.md) |
+| Logout across hosts: end-session, back-channel logout, the lookup, cookies and audit (proposed) | [0031](decisions/0031-logout-across-hosts.md) |
 
 ## 16. Status and next steps
 
@@ -502,6 +503,7 @@ Planned, in order:
 5. **Lambda:** the sign-in handler behind the Web Adapter and the authorizer as a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)), HTTP API first, then REST API. The real-AWS check runs the conformance scenarios through API Gateway ([0020](decisions/0020-conformance-suite.md)). Depends on atoom's B9 ([0025](decisions/0025-first-version-for-the-first-sites.md)): a Go `transport/sqs` driver mounted in the process for audit, because Lambda has no spool sidecar, and a Go `source/ssm` or `source/appconfig` driver for the site file and the policy bundle.
    - **The handlers** (built, [0030](decisions/0030-lambda-handlers-step-5-choices.md)): `session authorizer`, the native handler of both API Gateway products in `internal/apigateway`, with the answers, the context keys and the integration's parameter mapping; the sign-in function is `session serve --check-grpc ''` behind the Web Adapter, with no code of its own. Unit-tested in the process on the fit spike's sample events, with audit through the in-process transport driver.
    - **Waits for B9:** `transport/sqs` as a third audit switch beside `--audit-socket` and `--audit-stdout`, and atoom's Go `source/appconfig` mounted in place of `source/file`, which serves the configuration layer until then (0030); then the packaging under `lambda/` and the real-AWS run.
+   - **Then logout across hosts** ([0031](decisions/0031-logout-across-hosts.md), proposed): the logout lookup by atoom's index entries in place of pointer items, the issuer's end-session also without a live session, the refresh token revoked at the person's logout, both of session's cookies cleared. Built once the owner chooses L1 to L3.
 6. **sluis v2 as an issuer** once PAR and `private_key_jwt` land there ([0026](decisions/0026-exchange-targets-what-the-issuer-allows.md)). The scope is resource-client audiences: a route of mode `exchange` on a sluis v2 site names an AWS role, Kubernetes, a database, SSH, a vendor minter or KV, and the site's product APIs use the identity header. It waits for sluis's requirement REQ-EXCH-032, the exchange of a confidential `private_key_jwt` sign-in client's live sign-in token for a resource client (question 3 below). Sites on sluis v1 wait for v2.
 7. **The session core moves into atoom** when sluis's sign-in actor adopts it.
 
