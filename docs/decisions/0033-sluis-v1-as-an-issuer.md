@@ -1,9 +1,9 @@
 # 0033. sluis v1 as an issuer: the gaps, and what session and sluis v1 each change
 
-Status: proposed, 2026-11-25 (the owner's D92 A: session supports sluis v1 as an issuer now; the picks below wait for the owner)
+Status: accepted, 2026-11-25 (owner decision: D92 A, session supports sluis v1 as an issuer now; on this record O1 A, O2 A, O3 A, O4 B, O5 A)
 Date: 2026-11-25
 
-When accepted, it supersedes, for sites whose issuer is sluis v1, the row "The issuer" of [0025](0025-first-version-for-the-first-sites.md) and the line "Sites on sluis v1 wait for v2" of [0005](0005-tokens-per-api-and-issuers.md) and design sections 12 and 16. It keeps every other rule of those records, and every rule of [0016](0016-exchange-client-and-identity-header.md), [0019](0019-signing-keys-on-aws-kms.md), [0026](0026-exchange-targets-what-the-issuer-allows.md) and [0031](0031-logout-across-hosts.md). Keycloak stays the issuer of the first sites; sluis v2 stays step 6.
+Supersedes, for sites whose issuer is sluis v1, the row "The issuer" of [0025](0025-first-version-for-the-first-sites.md) and the line "Sites on sluis v1 wait for v2" of [0005](0005-tokens-per-api-and-issuers.md) and design sections 12 and 16. It keeps every other rule of those records, and every rule of [0016](0016-exchange-client-and-identity-header.md), [0019](0019-signing-keys-on-aws-kms.md), [0026](0026-exchange-targets-what-the-issuer-allows.md) and [0031](0031-logout-across-hosts.md). Keycloak stays the issuer of the first sites; sluis v2 stays step 6.
 
 ## Context
 
@@ -11,7 +11,7 @@ The owner decided (D92 A) that session supports sluis v1 as an issuer now, so th
 
 [0005](0005-tokens-per-api-and-issuers.md) found, in sluis v1.85.0, that v1 has no PAR and no `private_key_jwt`, and that its token exchange takes a sign-in token only from a `public` client. This record reads sluis v1.87.1 (branch `master`, read 2026-11-25) again, against everything session asks of an issuer today, and lists what is missing.
 
-The multi-issuer work (D84) is not on session's `master` and has no open pull request on 2026-11-25. A site file names one issuer. Each choice below is a property of the site's issuer, so it moves into a per-issuer entry unchanged if D84 lands.
+The multi-issuer work (D84) is record 0034, in its own pull request. On `master` a site file names one issuer. Each choice below is a property of the site's issuer: under 0034, each per-issuer entry carries its own `par` and its own scopes.
 
 ### What session asks of an issuer today
 
@@ -94,7 +94,7 @@ The OpenID provider is the zitadel-oidc `op` package v3.51.16, vendored under `t
 
 With no route of mode `exchange`, session refreshes nothing ([0016](0016-exchange-client-and-identity-header.md) refreshes before an exchange only). `offline_access` is still asked (G4): it is what makes sluis open a session, put `sid` in the ID token and post a logout token with it, and it gives [0031](0031-logout-across-hosts.md) L3 a refresh token to revoke at the person's logout.
 
-## Decision (proposed)
+## Decision
 
 1. **sluis v1 gets `private_key_jwt`** (G1 b), in a sluis v1 release before the first sluis v1 site. session's code does not change for it.
 2. **session gets `client.par`** in the site file, `required` (default) or `unavailable` (G2 a). `unavailable` is accepted only when the issuer's discovery has no `pushed_authorization_request_endpoint`; with it, `Login` sends the authorization request on the URL, and everything after the callback is unchanged.
@@ -105,7 +105,7 @@ With no route of mode `exchange`, session refreshes nothing ([0016](0016-exchang
 
 The order: the sluis v1 release with `private_key_jwt`; then session's `client.par` and the sluis v1 test job; then the site on the development environment.
 
-## Owner choices
+## Owner choices (answered)
 
 | | Question | Options | Recommended |
 | --- | --- | --- | --- |
@@ -115,10 +115,12 @@ The order: the sluis v1 release with `private_key_jwt`; then session's `client.p
 | O4 | What the first sluis v1 site's app receives | A: route mode `session` only (session admits by the Cedar policy over sluis's groups; the app sees no identity). B: `identity-header` (the app verifies session's `/_session/jwks`, a session-signed statement of the sluis sign-in, not a sluis token) | B if the app needs the person, else A; the owner confirms that a session-signed header meets "trusts sluis directly" |
 | O5 | sluis v1 testing in session's CI | A: a job against a pinned sluis v1 image. B: the deployed site's conformance run only | A |
 
+The owner's answers, 2026-11-25: **O1 A**, **O2 A**, **O3 A**, **O4 B** and **O5 A**. On O4 the owner accepts the identity header as meeting "trusts sluis directly": the app verifies session's `/_session/jwks`, and the header states the person of a sluis sign-in. The first sluis v1 site's app routes use the mode `identity-header`.
+
 ## Consequences
 
 - A sluis v1 site keeps every rule of the browser session contract ([0004](0004-browser-session-contract.md)), its keys on KMS and its audit as any site; the one weaker mode is G2's, named in its site file.
-- session's site file gains `client.par`; nothing else in its configuration changes. With O1 B, it also gains `client.auth: client_secret_basic` and `--client-secret-file`, a second client authentication path to keep until it is removed.
+- session's site file gains `client.par`; nothing else in its configuration changes. No `client_secret` mode is built (O1 A); the first sluis v1 site waits for the sluis v1 release with `private_key_jwt`.
 - sluis v1 gains `private_key_jwt` for confidential clients, which any other relying party may then use in place of a secret (sluis 0039 already prefers it).
 - A sluis v1 site's product APIs, if it has any, get the identity header, as on a sluis v2 site ([0026](0026-exchange-targets-what-the-issuer-allows.md)).
 - When the site moves to sluis v2, `client.par` goes back to `required` and the client is declared again at v2; the session store and the cookies do not change, but the people sign in again.
