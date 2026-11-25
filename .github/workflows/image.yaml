@@ -1,0 +1,122 @@
+# Publishes the image of session (decision 0028), for linux/amd64 and linux/arm64:
+#
+# - on a push to master: ghcr.io/truvity/session:master-<the first 12 characters of the commit>, built with the version
+#   0.0.0-master.<the same 12 characters>, for a development deployment that pins it by digest;
+# - on a tag vX.Y.Z: ghcr.io/truvity/session:X.Y.Z, built with the version X.Y.Z. A tag is made on the owner's approval
+#   (decision 0025); this workflow makes none.
+#
+# Two jobs, so the credential and the build are apart: `build` compiles the executables with no write permission and no token,
+# and `publish` holds packages: write, builds nothing and only copies the executables into a distroless image
+# (deploy/image/Dockerfile has no RUN). A pull request never runs this workflow; ci.yaml judges every pull request. A tag is
+# never moved: a push of a tag that is already in the registry fails.
+name: image
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions: {}
+
+# One publish at a time; a newer push does not cancel one that runs.
+concurrency:
+  group: image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (no token)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.name.outputs.tag }}
+      version: ${{ steps.name.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: The tag and the version
+        id: name
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_TYPE" = tag ]; then
+            [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "image: the tag $REF_NAME is not vX.Y.Z" >&2; exit 1; }
+            version=${REF_NAME#v}
+            tag=$version
+          else
+            version="0.0.0-master.${SHA:0:12}"
+            tag="master-${SHA:0:12}"
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+      - uses: truvity/ci-actions/setup-devbox@82e404675ef3f826755e2939d1072cddcd07ed26 # v3.9.0
+      # `version` of the amd64 build proves that the executable starts and names its version.
+      - name: Build
+        env:
+          VERSION: ${{ steps.name.outputs.version }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            devbox run -- just build-image "$arch" "$VERSION"
+          done
+          got=$(dist/image/linux/amd64/session version)
+          [ "$got" = "$VERSION" ] || { echo "image: the executable says $got, not $VERSION" >&2; exit 1; }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: session-image-dist
+          path: dist/image
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish (copy into the image, push)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: session-image-dist
+          path: dist/image
+      - name: Log in to ghcr.io
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Push the image
+        env:
+          SHA: ${{ github.sha }}
+          TAG: ${{ needs.build.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          ref="ghcr.io/truvity/session:$TAG"
+          if docker manifest inspect "$ref" >/dev/null 2>&1; then
+            echo "image: $ref is already in the registry; a tag is never moved" >&2
+            exit 1
+          fi
+          chmod 0555 dist/image/linux/*/session
+          builder="session-$GITHUB_RUN_ID"
+          docker buildx create --name "$builder" --driver docker-container \
+            --driver-opt 'image=moby/buildkit:v0.29.0@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5' >/dev/null
+          trap 'docker buildx rm --force "$builder" >/dev/null 2>&1 || true' EXIT
+          docker buildx build --builder "$builder" --platform linux/amd64,linux/arm64 --provenance=false --sbom=false \
+            --label "org.opencontainers.image.revision=$SHA" --label "org.opencontainers.image.version=$VERSION" \
+            --file deploy/image/Dockerfile --metadata-file dist/metadata.json --tag "$ref" --push dist/image
+          digest=$(jq -r '."containerimage.digest"' dist/metadata.json)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "image: no digest in the build's metadata" >&2; exit 1; }
+          echo "Pushed \`$ref@$digest\` (session version $VERSION)" | tee -a "$GITHUB_STEP_SUMMARY"
