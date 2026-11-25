@@ -8,9 +8,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -117,8 +117,10 @@ func serve(args []string) error {
 	fs.StringVar(&f.kmsAliasPrefix, "kms-alias-prefix", "", "the alias prefix of the KMS keys of --key PURPOSE=awskms; empty is session/<site>")
 	fs.StringVar(&f.kmsEndpoint, "kms-endpoint", "", "an AWS KMS endpoint other than AWS's")
 	fs.StringVar(&f.auditSocket, "audit-socket", "", "the emit socket of atoom's transport port (a transport driver such as transport-spool: DIR/emit.sock), "+
-		"to the audit writer of the environment; empty writes each security-audit record as one JSON line to stdout, refused in production")
-	fs.StringVar(&f.environment, "environment", "development", "development, staging or production")
+		"to the audit writer of the environment; required in every named environment. Empty writes each security-audit record as one JSON line "+
+		"to stdout, for local development only (--environment unset or local)")
+	fs.StringVar(&f.environment, "environment", "", "the environment of the installation (for example development, staging or production); "+
+		"unset or local is local development")
 	fs.StringVar(&f.table, "dynamodb-table", "", "the DynamoDB table of the store driver")
 	fs.StringVar(&f.endpoint, "dynamodb-endpoint", "", "a DynamoDB endpoint other than AWS's (DynamoDB Local)")
 	fs.StringVar(&f.listen, "listen", ":8080", "the address of the sign-in paths")
@@ -230,7 +232,7 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	if prefix == "" {
 		prefix = "session/" + sf.Site
 	}
-	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: keyPurposes, Choices: choices, StateDir: f.keyDir, Environment: f.environment,
+	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: keyPurposes, Choices: choices, StateDir: f.keyDir, Environment: driverEnvironment(f.environment),
 		AliasPrefix: prefix, KMS: func() (awskms.API, error) {
 			return awskmsapi.NewFromConfig(cfg, func(o *awskmsapi.Options) {
 				if f.kmsEndpoint != "" {
@@ -285,28 +287,57 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	return a, nil
 }
 
-// openAudit is the emitter of truvity/audit over the transport port (decision 0023): the emit socket of the environment's transport
-// driver, or the driver Lines in this process, which writes each record as one JSON line to stdout and is refused in production.
-// The pseudonyms are the seal block's.
+// local says the process runs for local development: --environment unset or local.
+func local(environment string) bool { return environment == "" || environment == "local" }
+
+// driverEnvironment is the environment the drivers are told: none for local development.
+func driverEnvironment(environment string) string {
+	if local(environment) {
+		return ""
+	}
+	return environment
+}
+
+// auditScope is the scope of the audit log: the environment, or local.
+func auditScope(environment string) string {
+	if local(environment) {
+		return "local"
+	}
+	return environment
+}
+
+// auditTransport is the client of the transport port (decision 0023): the emit socket of the environment's transport driver, or,
+// for local development only, the driver Lines in this process, which writes each record as one JSON line to w. Every named
+// environment refuses to start without the socket. stop is nil for the socket.
+func auditTransport(socketPath, environment string, w io.Writer) (transportv1alpha1connect.TransportServiceClient, func(), error) {
+	if socketPath != "" {
+		return audit.Socket(socketPath), nil, nil
+	}
+	if !local(environment) {
+		return nil, nil, fmt.Errorf("--audit-socket is required in the environment %q: the records go to the audit writer of the environment; "+
+			"only local development (--environment unset or local) writes them to stdout", environment)
+	}
+	client, stop := audit.NewLines(w).Mount()
+	return client, stop, nil
+}
+
+// openAudit is the emitter of truvity/audit over the transport port (decision 0023), with the seal block's pseudonyms.
 func openAudit(a *app, f serveFlags, sf *site.File, seal *sealer.Sealer) (*audit.Auditor, error) {
-	var tr transportv1alpha1connect.TransportServiceClient
-	if f.auditSocket != "" {
-		tr = audit.Socket(f.auditSocket)
-		slog.Info("audit", "transport", "socket", "socket", f.auditSocket)
-	} else {
-		if f.environment == "production" {
-			return nil, errors.New("--audit-socket is required in production: the records go to the audit writer of the environment")
-		}
-		client, stop := audit.NewLines(os.Stdout).Mount()
+	tr, stop, err := auditTransport(f.auditSocket, f.environment, os.Stdout)
+	if err != nil {
+		return nil, err
+	}
+	if stop != nil {
 		a.closers = append(a.closers, stop)
-		tr = client
 		slog.Info("audit", "transport", "lines", "to", "stdout")
+	} else {
+		slog.Info("audit", "transport", "socket", "socket", f.auditSocket)
 	}
 	bundle := ""
 	if sf.Policy != nil {
 		bundle = sf.Policy.Bundle
 	}
-	return audit.New(audit.Options{Transport: tr, Pseudonyms: seal, Release: version, Scope: f.environment, Policy: bundle})
+	return audit.New(audit.Options{Transport: tr, Pseudonyms: seal, Release: version, Scope: auditScope(f.environment), Policy: bundle})
 }
 
 func (a *app) run(ctx context.Context, f serveFlags) error {

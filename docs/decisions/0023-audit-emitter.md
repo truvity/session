@@ -16,7 +16,7 @@ Until now `internal/audit` was a stand-in: each `core.Event` as one JSON line of
 
 atoom 0.6.0 has the port (`transport`, `atoom.transport.v1alpha1.TransportService`) and one driver, `transport-spool`, in Rust, a sidecar that serves the emit side on a UNIX socket (`DIR/emit.sock`). There is no Go driver. The emitter 0.19.0 pins atoom 0.5.0; Go's minimum version selection takes session's 0.6.0, and the emitter builds on it and passes its own tests on it, so one atoom version stays in `go.mod`.
 
-The records say what to use. Where they are silent, the build chose; those choices are below.
+The records say what to use. Where they are silent, the choices below were made on 2026-11-25, by the owner (the transport outside local development, where the transport is set, the scope of the pseudonym key, the sign-in's call) and in the build; the record is accepted on its pull request.
 
 ## Decision
 
@@ -25,9 +25,10 @@ The records say what to use. Where they are silent, the build chose; those choic
 | Subject | Choice |
 | --- | --- |
 | The module | `github.com/truvity/audit/emitter` v0.19.0, with `transport` and `socket` of atoom 0.6.0: every atoom module stays at 0.6.0 |
-| Product, component, scope | Product `session` (`metadata.product.name` and the product object `unmapped.session`); component `session` (`actor.user.uid` is `session@<scope>`); scope the `--environment` of the process (`metadata.log_name`) |
-| Release | session's version, which must be a semantic version: the default build's is now `0.0.0-dev` (it was `dev`), as the writer refuses a record whose release is not a version |
+| Product, component, scope | Product `session` (`metadata.product.name` and the product object `unmapped.session`); component `session` (`actor.user.uid` is `session@<scope>`); scope the `--environment` of the process, `local` for local development (`metadata.log_name`) |
+| Release | session's version, which must be a semantic version: the default build's is now `0.0.0-dev` (it was `dev`, and `session version` prints the new value), as the writer refuses a record whose release is not a version |
 | Tenant | None: the operator's own tenant, which the writer fills. session has no tenants; the site is a field of the product object |
+| The stand-in's format | Dropped: no record of session's own shape is written any more |
 | The time of a record | The emitter's clock at the emit, not `core.Event.Time`; both are the process's clock |
 | Where it runs | In session's process, as a library, behind `core.Auditor` (`internal/audit.Auditor`); the core is unchanged |
 
@@ -73,7 +74,7 @@ session's action table is code in `internal/audit` (`Table`, `Schemas`): one row
 | Event | Call | When the transport is down |
 | --- | --- | --- |
 | `sign-in` | Blocking (`EmitBlocking`): the answer comes when the transport says the record is durable | The sign-in fails closed with 503, as 0015 decided; the event is not lost, because the sign-in did not happen |
-| Every other | Best effort (`Emit`), bounded by one second | The check is answered as before; the event is counted in `session_audit_dropped_total` and by the emitter, whose next record carries the total of lost facts |
+| Every other | Best effort (`Emit`), bounded by one second, a constant in code | The check is answered as before; the event is counted in `session_audit_dropped_total` and by the emitter, whose next record carries the total of lost facts |
 
 ### The transport
 
@@ -81,13 +82,14 @@ session's action table is code in `internal/audit` (`Table`, `Schemas`): one row
 | --- | --- |
 | Where it is set | A start-up setting, as the store and key drivers are: not the site file, whose planned `audit` section is dropped |
 | To the audit writer of the environment | `session serve --audit-socket PATH`: a client of the port over the UNIX socket of the environment's transport driver, the emit socket of `transport-spool` (`DIR/emit.sock`), which names session from the peer credentials and whose consumer is the writer |
-| Without a writer | No `--audit-socket`: `internal/audit.Lines`, a driver of the port mounted in session's process, writes each record, the canonical JSON, as one line to stdout, as the stand-in did. It serves no consumer and keeps nothing. It is refused when `--environment` is `production`, as the memory store is |
+| Local development only | No `--audit-socket` with `--environment` unset or `local`: `internal/audit.Lines`, a driver of the port mounted in session's process, writes each record, the canonical JSON, as one line to stdout, as the stand-in did. It serves no consumer and keeps nothing. The drivers are told no environment, and the scope of the log is `local` |
+| Every named environment | Any other value of `--environment` (`devel`, `stage`, `production`, `development`, or any other) refuses to start without `--audit-socket`: the records of an environment go to its writer |
 | The tests | `Lines` over a buffer, and the seal block of `sealertest`: no socket, no container and no AWS. The conformance suite runs the emitter in its stand the same way, and checks after each host that every action its scenarios reach was recorded and that no record names the person |
 
 ## Consequences
 
 - Each record is an OCSF record that the environment's writer can validate and seal; the stand-in's shape is gone, and with it the subject in clear.
-- A production install runs a transport driver beside session, today the `transport-spool` sidecar, and the writer consumes it.
+- An install in any named environment runs a transport driver beside session, today the `transport-spool` sidecar, and the writer consumes it.
 - session's records pass the emitter's checks before they leave: an event that does not fit the table is refused in the process, counted, and never reaches the writer.
 - One more data key a month in the store, for the pseudonyms; the pseudonyms of a month can be destroyed with its key once the seal block's `Erase` is reachable.
 - The operational log on stderr and the records on stdout stay apart in a run without a writer.
@@ -99,7 +101,9 @@ session's action table is code in `internal/audit` (`Table`, `Schemas`): one row
 | Keep the stand-in as a driver | Its shape is session's own and names the subject in clear; `Lines` writes the real records with the same ease |
 | A Go driver of the spool in session's process | atoom has the spool in Rust only; a second implementation of a durable queue is atoom's to write, not session's |
 | The transport in the site file (`audit.transport`, the planned shape of design section 10) | The site file says what a site is; which drivers run beside the process is the deployment's, as for the store and the keys |
-| `Lines` as the production fallback when no socket is given | A record on stdout is not in the writer's log, and 0008 sends the events to the writer of the environment |
+| `Lines` in every environment but production when no socket is given | A record on stdout is not in the writer's log, and 0008 sends the events of an environment to its writer; only a run on a developer's machine has none |
+| Always require a socket, even locally | Every local run and example would need a spool sidecar, for records nobody reads |
+| `--environment` defaulting to `development` as before | An install that forgot the flag would then be an environment of its own name with nowhere to send its records; unset now means local development |
 | A tenant for each site | session has no tenants, and a pseudonym key of the tenant would need a scope of the seal block for each site; the site is in the product object |
 | A pseudonym key of the environment, shared by every site | Needs a host of the seal block beside the sites; within one installation, pseudonyms are stable |
 | The issuer in the pseudonym's value | A site has one issuer; the issuer is in the product object |
@@ -109,9 +113,13 @@ session's action table is code in `internal/audit` (`Table`, `Schemas`): one row
 | The activity of a denial by the HTTP method (2 Read, 1 Create) | `core.Event` has no method, and the event carries what it carried |
 | A decision id of its own for each denial as `policy.uid` | A random id names nothing a reader can look up; the bundle's name and its digest name the policy that decided |
 | A best-effort sign-in | 0008 and 0015: a sign-in completes only after its event is accepted |
+| The required call (`EmitRequired`) for a sign-in | It waits only for the transport's answer, not for durability; the same on the spool, weaker on a driver that answers before it writes |
+| A flag for the best-effort timeout | One second is well under a proxy's timeout for the check; a knob nobody needs yet |
+| Keep the version `dev` and map it to a semantic version inside `internal/audit` | Two names for one build: what `session version` prints and what the records say would differ |
 
 ## Open
 
 - Publishing session's catalogue (the table and its schemas, `internal/audit.Schemas`) to the writer of an environment: with the move of audit's generator and the `AuditCatalogue` kind.
 - The Lambda shape: the transport driver of Lambda is atoom's planned `transport/sqs`.
 - The seal block's `Erase` of a month's pseudonym key, with its rotation and rewrap (0021).
+- A denial's gaps: its `src_endpoint.name` is `unknown`, because the check is not told which proxy asked, and its activity is always 99 `Check`, because `core.Event` has no HTTP method. Each needs a field of `core.Event`: the adapter that answered, and the method.
