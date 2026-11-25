@@ -349,9 +349,9 @@ func (a *app) signIn(ctx context.Context) error {
 // openSource mounts the driver of the source port, which serves the site file and the policy bundle: atoom's Go source/file over
 // --config-dir, on every shape. On Lambda that directory is the configuration layer (decision 0012).
 //
-// The seam of atoom's B9 (decisions 0025 and 0030): B9 brings a Go source/ssm or source/appconfig driver. Which of them the
-// Lambda shape uses, and so which start-up switch selects it here beside --config-dir, is not decided yet; the core, the policy
-// loader and the authorizer read only the port's client, so the driver is mounted here and nothing else changes.
+// The seam of atoom's B9 (decisions 0025 and 0030): the Lambda shape reads its documents through atoom's Go source/appconfig
+// once B9 ships it, selected by a start-up switch here beside --config-dir, and through the configuration layer until then; the
+// core, the policy loader and the authorizer read only the port's client, so the driver is mounted here and nothing else changes.
 func openSource(f serveFlags) (*atoomx.Source, error) {
 	src, err := atoomx.FileSource(f.configDir)
 	if err != nil {

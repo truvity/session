@@ -1,6 +1,6 @@
 # 0030. The Lambda handlers: the choices of step 5, before atoom's B9
 
-Status: proposed, 2026-11-25
+Status: accepted, 2026-11-25 (owner decision on the pull request)
 Date: 2026-11-25
 
 Builds the part of step 5 (design section 16) that needs no new atoom driver: the API Gateway authorizer as a native Go handler ([0014](0014-authorizer-native-go-handler.md)) and the sign-in function behind the Lambda Web Adapter ([0012](0012-lambda.md)). It keeps every rule of [0011](0011-host-adapter-rules.md) for API Gateway, and it names the two places where atoom's B9 plugs in ([0025](0025-first-version-for-the-first-sites.md)). The run in a real AWS account is not part of it.
@@ -45,7 +45,7 @@ Only the context reaches the integration, as `$context.authorizer.<key>`, so an 
 | `identity` | The signed identity header of a route of mode `identity-header` | `integration.request.header.X-Session-Identity` = `context.authorizer.identity` | `overwrite:header.x-session-identity` = `$context.authorizer.identity` |
 | `cookie` | The `Cookie` header without session's cookies | `integration.request.header.Cookie` = `context.authorizer.cookie` | `overwrite:header.cookie` = `$context.authorizer.cookie` |
 
-`X-Session-Token` carries the same value as `Authorization` on the other hosts, `Bearer` included, so a site reads either header with the same code.
+`X-Session-Token` carries `Bearer <token>`, the same value as `Authorization` on the other hosts, so a site reads either header with the same code (owner decision, 2026-11-25).
 
 ### The sign-in function
 
@@ -64,9 +64,19 @@ The two handlers share everything but the event and the answer, so both are buil
 | Seam | Where | Today | When B9 is released |
 | --- | --- | --- | --- |
 | Audit on Lambda | `auditTransport` in `cmd/session/main.go`, beside `--audit-socket` and `--audit-stdout` | A function has no socket. `--audit-stdout` works, for the emulator and local runs; it is not for a deployment (0024) | atoom's Go `transport/sqs` is mounted in the process, as `audit.Lines` is, and selected by a third switch of its own; still exactly one of the three. The emitter, the action table and the blocking sign-in stay as they are |
-| The site file and the policy bundle | `openSource` in `cmd/session/main.go` | atoom's Go `source/file` over `--config-dir`; on Lambda, the configuration layer of 0012 | The driver B9 brings is mounted there instead, by a start-up switch beside `--config-dir`. The core, the policy loader and the authorizer read the port's client only |
+| The site file and the policy bundle | `openSource` in `cmd/session/main.go` | atoom's Go `source/file` over `--config-dir`; on Lambda, the configuration layer of 0012 | atoom's Go `source/appconfig` is mounted there instead, by a start-up switch beside `--config-dir`. The core, the policy loader and the authorizer read the port's client only |
 
-Which of `source/ssm` and `source/appconfig` the Lambda shape uses, and what is left of the configuration layer, is not decided here (see Open).
+### The source of the Lambda shape
+
+Decided by the owner on 2026-11-25, which settles what [0025](0025-first-version-for-the-first-sites.md) left to step 5:
+
+| Option | Pros | Cons |
+| --- | --- | --- |
+| The configuration layer on `source/file` (0012) | Works today; no call at start or refresh | A change of the site file or the bundle is a new layer version and a function update |
+| `source/ssm` | Simple | A parameter holds at most 8 KB in the advanced tier, which a signed policy bundle can exceed |
+| **`source/appconfig`** | Documents of a megabyte and more in hosted configuration; versions, validators and staged deployments with rollback | A call to AppConfig's data API at each refresh |
+
+**The Lambda shape reads the site file and the policy bundle through atoom's Go `source/appconfig` once B9 ships it, and through the configuration layer on `source/file` (0012) until then.** `source/ssm` is not used for the Lambda shape. The switch that selects `source/appconfig`, and its settings, follow the driver's own options when it is released.
 
 ## Consequences
 
@@ -84,9 +94,9 @@ Which of `source/ssm` and `source/appconfig` the Lambda shape uses, and what is 
 | Only the context keys a route sets | What a mapping does with a key that is absent is not documented; every key on every allow makes the overwrite the same on every route |
 | The bare token in `X-Session-Token` | A site behind two hosts would read the two headers differently |
 | A second Lambda handler for the sign-in paths | 0012: a second entry point to keep in step with the HTTP server |
-| Choosing the SQS or source driver's settings now | The drivers are atoom's, and not released |
+| Choosing the SQS or AppConfig driver's settings now | The drivers are atoom's, and not released |
+| `source/ssm` for the Lambda shape | A signed policy bundle can exceed a parameter's 8 KB |
 
 ## Open
 
-- **The source driver of the Lambda shape** (0025 leaves it to step 5): the configuration layer on `source/file` (works today; a change of the site file is a new layer version and a function update), `source/ssm` (simple; a parameter holds at most 8 KB in the advanced tier, which a signed policy bundle can exceed), or `source/appconfig` (documents of a megabyte and more in hosted configuration, versions, validators and staged deployments with rollback; a call to AppConfig's data API at each refresh). An owner choice, and a driver that atoom's B9 must provide.
 - To observe in a real AWS account (0011, design section 17, `spike/scripts/aws-check.sh`): the HTTP API status for `Unauthorized` and for `isAuthorized: false`; the HTTP API default cache TTL; parameter mapping from `$context.authorizer.*`, an empty value included; whether `rawPath` begins with the stage on a named stage; the REST API's `path` under a custom domain's base path mapping.
