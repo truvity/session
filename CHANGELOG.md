@@ -5,6 +5,13 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### Logout across hosts
+
+- **The back-channel logout lookup uses atoom's index entries** ([0031](docs/decisions/0031-logout-across-hosts.md)), in place of the pointer items of [0010](docs/decisions/0010-logout-pointer-items.md): each session item carries the entries `sid` and `sub` (keyed hashes of the issuer and the value), resent by every put of it, the idle refresh and the write of refreshed tokens included; a back-channel logout finds the sessions with a linearizable `Query` by entry. A sign-in no longer reads or rewrites a shared item, so parallel sign-ins of one subject never retry. No migration: nothing is deployed.
+- **A logout without a live session goes to the issuer's end-session** too (without `id_token_hint`), so "sign out" always ends the issuer's session.
+- **The person's logout revokes the refresh token** at the issuer's `revocation_endpoint` (RFC 7009, with the client's assertion), best effort and bounded by the exchange timeout, when discovery names one. A failure is counted in the new `session_logout_revocation_failed_total` and the logout goes on.
+- The logout answer also clears the sign-in binding cookie `__Host-<site>-signin`.
+
 ### Step 5, part one: the API Gateway authorizer
 
 - New: `session authorizer`, the API Gateway Lambda authorizer as a native Go handler of the check ([0014](docs/decisions/0014-authorizer-native-go-handler.md), [0030](docs/decisions/0030-lambda-handlers-step-5-choices.md)), for the HTTP API (payload 2.0, simple responses) and the REST API (REQUEST authorizer, and payload 1.0). It runs only as a Lambda function. No session is the error `Unauthorized` (401), every other refusal a deny (403), an unavailable check a function error (500); an allow carries the token, the identity header and the site's cookies in the context keys `authorization`, `identity` and `cookie`, for the integration's parameter mapping.

@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	commonv1 "github.com/truvity/atoom/common/gen/atoom/common/v1alpha1"
 	storev1 "github.com/truvity/atoom/store/gen/atoom/store/v1alpha1"
 )
 
@@ -174,11 +174,11 @@ func (c *Core) touch(ctx context.Context, s *Session) {
 	}
 	ctx, cancel := c.bound(ctx)
 	defer cancel()
-	v, err := c.packSession(ctx, s.key, s.Created, now, &s.Record)
+	put, err := c.sessionPut(ctx, s.key, s.Created, now, s.Expires, &s.Record)
 	if err == nil {
 		_, err = c.items.Transact(ctx, connect.NewRequest(&storev1.TransactRequest{
 			Conditions: []*storev1.Condition{{Key: s.key, Expect: &storev1.Condition_Version{Version: s.version}}},
-			Puts:       []*storev1.Put{{Key: s.key, Value: v, ExpiresAt: timestamppb.New(s.Expires)}},
+			Puts:       []*storev1.Put{put},
 		}))
 	}
 	if err != nil && !aborted(err) {
@@ -186,34 +186,49 @@ func (c *Core) touch(ctx context.Context, s *Session) {
 	}
 }
 
-// pointer is the value of a pointer item: the store keys of the sessions of one sid or subject.
-type pointer struct {
-	Members []string `json:"m"`
-}
+// The index entries of a session item (decision 0031): the store finds a sid's or a subject's sessions by them, with a
+// linearizable Query, at a back-channel logout. Their values are keyed hashes of the issuer and the sid or subject, never the
+// values in clear.
+const (
+	indexSID = "sid"
+	indexSub = "sub"
+)
 
-func (c *Core) pointerKeys(ctx context.Context, r *Record) ([][]byte, error) {
-	sub, err := c.lookupKey(ctx, "p/sub/", r.Issuer, r.Subject)
+// sessionIndexes are the index entries of a record. Every put of the session item must carry them all: a put that leaves one
+// out deletes it (fit spike, section 2.3.1), so the idle refresh and the write of refreshed tokens make them here too.
+func (c *Core) sessionIndexes(ctx context.Context, r *Record) ([]*commonv1.IndexEntry, error) {
+	sub, err := c.mac(ctx, PurposeLookupKey, r.Issuer, r.Subject)
 	if err != nil {
 		return nil, err
 	}
-	keys := [][]byte{sub}
+	entries := []*commonv1.IndexEntry{{Name: indexSub, Value: []byte(sub)}}
 	if r.SID != "" {
-		sid, err := c.lookupKey(ctx, "p/sid/", r.Issuer, r.SID)
+		sid, err := c.mac(ctx, PurposeLookupKey, r.Issuer, r.SID)
 		if err != nil {
 			return nil, err
 		}
-		keys = append(keys, sid)
+		entries = append(entries, &commonv1.IndexEntry{Name: indexSID, Value: []byte(sid)})
 	}
-	return keys, nil
+	return entries, nil
 }
 
-// createTries bounds the retries of a session creation that lost a race on a pointer item.
-const createTries = 20
+// sessionPut is the put of a session item: the sealed record and its index entries.
+func (c *Core) sessionPut(ctx context.Context, key []byte, created, lastSeen, expires time.Time, r *Record) (*storev1.Put, error) {
+	v, err := c.packSession(ctx, key, created, lastSeen, r)
+	if err != nil {
+		return nil, err
+	}
+	ix, err := c.sessionIndexes(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	return &storev1.Put{Key: key, Value: v, ExpiresAt: timestamppb.New(expires), Indexes: ix}, nil
+}
 
-// Create stores a new session under a new id and returns the id (a new id at every sign-in: no fixation). The session item and
-// the pointer items of its sid and subject are written in one transaction (decision 0010). Then it reads the tombstones once:
-// if a back-channel logout for the sid or the subject arrived after started, the time the sign-in began, it deletes the new
-// session and returns ErrLoggedOut.
+// Create stores a new session under a new id and returns the id (a new id at every sign-in: no fixation). The session item is
+// one put with its index entries for its sid and subject (decision 0031), on the condition that the key is absent. Then it
+// reads the tombstones once: if a back-channel logout for the sid or the subject arrived after started, the time the sign-in
+// began, it deletes the new session and returns ErrLoggedOut.
 func (c *Core) Create(ctx context.Context, r *Record, started time.Time) (string, error) {
 	if r.Subject == "" || r.Issuer == "" {
 		return "", errors.New("session: a record without subject or issuer")
@@ -226,46 +241,15 @@ func (c *Core) Create(ctx context.Context, r *Record, started time.Time) (string
 		return "", err
 	}
 	now := c.now()
-	expires := now.Add(c.rules.Max)
-	value, err := c.packSession(ctx, key, now, now, r)
+	put, err := c.sessionPut(ctx, key, now, now, now.Add(c.rules.Max), r)
 	if err != nil {
 		return "", err
 	}
-	pks, err := c.pointerKeys(ctx, r)
-	if err != nil {
+	if _, err := c.items.Transact(ctx, connect.NewRequest(&storev1.TransactRequest{
+		Conditions: []*storev1.Condition{{Key: key, Expect: &storev1.Condition_Absent{Absent: true}}},
+		Puts:       []*storev1.Put{put},
+	})); err != nil {
 		return "", err
-	}
-	for try := 1; ; try++ {
-		req := &storev1.TransactRequest{
-			Conditions: []*storev1.Condition{{Key: key, Expect: &storev1.Condition_Absent{Absent: true}}},
-			Puts:       []*storev1.Put{{Key: key, Value: value, ExpiresAt: timestamppb.New(expires)}},
-		}
-		for _, pk := range pks {
-			var p pointer
-			res, err := c.items.Get(ctx, connect.NewRequest(&storev1.ItemGetRequest{Key: pk, Linearizable: true}))
-			switch {
-			case err == nil:
-				if err := json.Unmarshal(res.Msg.GetItem().GetValue(), &p); err != nil {
-					return "", fmt.Errorf("session: a pointer item that does not parse: %w", err)
-				}
-				req.Conditions = append(req.Conditions, &storev1.Condition{Key: pk, Expect: &storev1.Condition_Version{Version: res.Msg.GetItem().GetVersion()}})
-			case notFound(err):
-				req.Conditions = append(req.Conditions, &storev1.Condition{Key: pk, Expect: &storev1.Condition_Absent{Absent: true}})
-			default:
-				return "", err
-			}
-			p.Members = append(p.Members, string(key))
-			pv, _ := json.Marshal(p)
-			// A pointer lives as long as the newest session it lists can.
-			req.Puts = append(req.Puts, &storev1.Put{Key: pk, Value: pv, ExpiresAt: timestamppb.New(expires)})
-		}
-		_, err := c.items.Transact(ctx, connect.NewRequest(req))
-		if err == nil {
-			break
-		}
-		if !aborted(err) || try >= createTries {
-			return "", err
-		}
 	}
 	// The race of a logout that arrives before the sign-in has finished (decision 0010): one tombstone read, at creation only.
 	at, err := c.tombstoneAt(ctx, r)
@@ -335,8 +319,7 @@ func (c *Core) deleteSession(ctx context.Context, key []byte) error {
 	return c.deleteAll(ctx, dels)
 }
 
-// Delete ends a session by its cookie id (the person's own logout), with its cached tokens. Its pointer entries stay until
-// they expire: a stale member costs one failed delete at a back-channel logout.
+// Delete ends a session by its cookie id (the person's own logout), with its cached tokens. Its index entries go with it.
 func (c *Core) Delete(ctx context.Context, id string) error {
 	if !validID(id) {
 		return nil
@@ -393,9 +376,9 @@ func (c *Core) tombstoneAt(ctx context.Context, r *Record) (time.Time, error) {
 	return newest, nil
 }
 
-// LogoutBy ends the sessions of a sid, or of a subject when sid is empty (a back-channel logout, decision 0010). It writes the
-// tombstone, reads the pointer item with a linearizable Get, and deletes the sessions it lists and the pointer in one
-// transaction. It returns how many listed sessions it deleted (stale members included).
+// LogoutBy ends the sessions of a sid, or of a subject when sid is empty (a back-channel logout, decisions 0010 and 0031). It
+// writes the tombstone, finds the sessions by their index entry with a linearizable Query, and deletes them with the items
+// under their keys. It returns how many sessions it deleted.
 func (c *Core) LogoutBy(ctx context.Context, iss, sid, sub string) (int, error) {
 	if iss == "" || (sid == "" && sub == "") {
 		return 0, errors.New("session: a logout needs the issuer and a sid or a subject")
@@ -403,9 +386,9 @@ func (c *Core) LogoutBy(ctx context.Context, iss, sid, sub string) (int, error) 
 	ctx, cancel := c.bound(ctx)
 	defer cancel()
 	now := c.now()
-	kind, val := "sid", sid
+	kind, index, val := "sid", indexSID, sid
 	if sid == "" {
-		kind, val = "sub", sub
+		kind, index, val = "sub", indexSub, sub
 	}
 	tk, err := c.lookupKey(ctx, "t/"+kind+"/", iss, val)
 	if err != nil {
@@ -417,35 +400,39 @@ func (c *Core) LogoutBy(ctx context.Context, iss, sid, sub string) (int, error) 
 		Puts: []*storev1.Put{{Key: tk, Value: b, ExpiresAt: timestamppb.New(now.Add(c.rules.Max))}}})); err != nil {
 		return 0, err
 	}
-	pk, err := c.lookupKey(ctx, "p/"+kind+"/", iss, val)
+	v, err := c.mac(ctx, PurposeLookupKey, iss, val)
 	if err != nil {
 		return 0, err
 	}
-	res, err := c.items.Get(ctx, connect.NewRequest(&storev1.ItemGetRequest{Key: pk, Linearizable: true}))
-	if notFound(err) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	var p pointer
-	if err := json.Unmarshal(res.Msg.GetItem().GetValue(), &p); err != nil {
-		return 0, fmt.Errorf("session: a pointer item that does not parse: %w", err)
-	}
-	members := slices.Compact(slices.Sorted(slices.Values(p.Members)))
-	dels := []*storev1.Delete{{Key: pk}}
-	for _, m := range members {
-		md, err := c.sessionDeletes(ctx, []byte(m))
+	var keys [][]byte
+	var token []byte
+	for {
+		res, err := c.items.Query(ctx, connect.NewRequest(&storev1.QueryRequest{Prefix: []byte("s/"), Index: index, IndexValue: []byte(v),
+			PageSize: 100, PageToken: token, Linearizable: true}))
 		if err != nil {
 			return 0, err
 		}
-		dels = append(dels, md...)
+		for _, it := range res.Msg.GetItems() {
+			keys = append(keys, it.GetKey())
+		}
+		token = res.Msg.GetNextPageToken()
+		if len(token) == 0 {
+			break
+		}
 	}
-	// Delete in chunks that DynamoDB takes in one transaction, the pointer in the first.
+	var dels []*storev1.Delete
+	for _, k := range keys {
+		kd, err := c.sessionDeletes(ctx, k)
+		if err != nil {
+			return 0, err
+		}
+		dels = append(dels, kd...)
+	}
+	// Delete in chunks that DynamoDB takes in one transaction.
 	if err := c.deleteAll(ctx, dels); err != nil {
 		return 0, err
 	}
-	return len(members), nil
+	return len(keys), nil
 }
 
 // ClaimOnce records a name once until the given time and says whether this call was the first (the jti of a logout token).

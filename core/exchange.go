@@ -252,12 +252,12 @@ func (c *Core) saveTokens(ctx context.Context, s *Session, apply func(*Record)) 
 	for try := 1; ; try++ {
 		bctx, cancel := c.bound(ctx)
 		now := c.now()
-		v, err := c.packSession(bctx, s.key, s.Created, now, &s.Record)
+		put, err := c.sessionPut(bctx, s.key, s.Created, now, s.Expires, &s.Record)
 		if err == nil {
 			var res *connect.Response[storev1.TransactResponse]
 			res, err = c.items.Transact(bctx, connect.NewRequest(&storev1.TransactRequest{
 				Conditions: []*storev1.Condition{{Key: s.key, Expect: &storev1.Condition_Version{Version: s.version}}},
-				Puts:       []*storev1.Put{{Key: s.key, Value: v, ExpiresAt: timestamppb.New(s.Expires)}},
+				Puts:       []*storev1.Put{put},
 			}))
 			if err == nil {
 				if items := res.Msg.GetItems(); len(items) == 1 {

@@ -1,6 +1,6 @@
 # 0010. Logout without a secondary index: pointer items and one tombstone read at creation
 
-Status: accepted
+Status: accepted; partly superseded by [0031](0031-logout-across-hosts.md) (a session is found by atoom's index entries, not by pointer items; the tombstones stay)
 Date: 2026-11-21
 
 ## Context

@@ -20,7 +20,7 @@ just test-remote HOST=docs.devel.example.com ISSUER=https://idp.devel.example.co
 | Exchange, identity header, a refused exchange | yes | yes | |
 | Store outage: 503, never an allow | yes | no | A deployed site's store cannot be taken down from the test |
 | Bad paths | yes | yes | |
-| Logout and Keycloak's end-session (S6) | yes | yes | |
+| Logout and Keycloak's end-session (S6), also without a live session (0031) | yes | yes | |
 | Back-channel logout | yes | no | Ending the person's Keycloak session from outside the browser takes the realm's admin API |
 | Refresh refused | yes | no | The admin API again, and a clock six minutes ahead (Keycloak's access tokens live five) |
 | Idle lifetime | no | yes | It waits out `session.idle` of the remote site file (90 s) in real time; the local stand keeps the defaults |

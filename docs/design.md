@@ -231,7 +231,7 @@ The records are [0005](decisions/0005-tokens-per-api-and-issuers.md), for the ch
 
 ## 8. Logout
 
-The person's own logout is simple: a POST with CSRF headers deletes the session, clears the cookie and sends the browser to the issuer's end-session with `id_token_hint`: as JSON `{"logout_url"}` for the browser helper's `fetch`, as a `303` otherwise ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md)).
+The person's own logout is simple: a POST with CSRF headers deletes the session, revokes its refresh token at the issuer when the issuer has a revocation endpoint (best effort, a failure counted), clears session's two cookies and sends the browser to the issuer's end-session, also when there was no live session (with `id_token_hint` only when there was): as JSON `{"logout_url"}` for the browser helper's `fetch`, as a `303` otherwise ([0015](decisions/0015-envoy-http-mode-csrf-header-and-step-2-choices.md), [0031](decisions/0031-logout-across-hosts.md)). What each host does at a logout is in 0031.
 
 Logout started at the issuer arrives by back-channel logout. The issuer posts to any replica. All replicas share the store, so deleting there is enough.
 
@@ -250,8 +250,8 @@ sequenceDiagram
     R2->>R2: validate JWT: signature, iss, aud, events claim, no nonce
     R2->>V: set jti if absent, reject replay
     R2->>V: write tombstone for sid or sub
-    R2->>V: read pointer item for sid (or sub), strongly consistent
-    R2->>V: delete the sessions it lists, their exchanged tokens and the pointer
+    R2->>V: query the sessions by their index entry for sid (or sub), strongly consistent
+    R2->>V: delete them and their exchanged tokens
     R2-->>I: 200
     B->>R1: next request through host proxy
     R1->>V: load session
@@ -259,12 +259,12 @@ sequenceDiagram
     R1-->>B: redirect to sign-in or 401
 ```
 
-Design consequences ([0010](decisions/0010-logout-pointer-items.md)):
+Design consequences ([0010](decisions/0010-logout-pointer-items.md), [0031](decisions/0031-logout-across-hosts.md)):
 
 - Replicas keep no session state. The next check on any replica sees the deletion at once. For this reason the first version has no local session cache.
-- There is no secondary index. Pointer items hold the session keys for each `sid` and each subject. A pointer item is written in the same transaction as the session. The logout reads it with a strongly consistent get, so it cannot miss a session committed before it.
+- There is no secondary index. Each session item carries two index entries of atoom's store, `sid` and `sub`, keyed hashes of the issuer and the value, written in the session's own put; every put of the session resends them, the idle refresh included. The logout finds the sessions with a linearizable `Query` by entry, so it cannot miss a session committed before it (to confirm on the real DynamoDB service).
 - One race is left: a logout that arrives before the sign-in has finished. The callback closes it with one tombstone read at session creation, never on each check. If a tombstone newer than the start of the sign-in exists, the callback ends the session it just made.
-- Tombstones are written by every back-channel logout, by `sid`, or by subject when the token has no `sid`. They and the pointers live as long as the maximum session lifetime.
+- Tombstones are written by every back-channel logout, by `sid`, or by subject when the token has no `sid`. They live as long as the maximum session lifetime.
 - The `jti` of a logout token is stored until the token expires, so a replay is refused.
 
 ## 9. Built on atoom: ports, blocks, policy, audit
@@ -273,7 +273,7 @@ Design consequences ([0010](decisions/0010-logout-pointer-items.md)):
 
 | Need | From atoom | First implementation |
 | --- | --- | --- |
-| Sessions, pointers, tombstones, locks, the token cache | `store` port | `store/dynamodb`. Any driver that passes the store kit: PostgreSQL and Valkey when atoom builds them |
+| Sessions and their index entries, tombstones, locks, the token cache | `store` port | `store/dynamodb`. Any driver that passes the store kit: PostgreSQL and Valkey when atoom builds them |
 | The keys: signing, wrapping the data keys | `key` port, with `key/route` in front of the drivers | `key/awskms`, `key/software` (a key file) |
 | Sealing of records, keyed hashes of store keys, signatures by purpose | `seal` block (`blocks/seal`) | Over the key port's keys and session's own store |
 | The client assertion, the identity header, the JWKS | `token` block (`blocks/token`) | Over the seal block |
@@ -292,7 +292,7 @@ Sessions can live in any atoom store driver that passes the kit. A driver declar
 | Expiry | A TTL attribute, plus an explicit expiry check on read, because TTL deletion is lazy |
 | Idle refresh | A conditional update, at most once a minute for each session |
 | Exchange lock | A conditional write with a short expiry, one item for each session and audience, under the session's key |
-| Back-channel logout | Pointer items per `sid` and per subject, written in the session-creation transaction, read with a strongly consistent get. A tombstone read once at creation. No secondary index |
+| Back-channel logout | Index entries per `sid` and per subject on the session item, resent by every put of it, found with a linearizable `Query` by entry ([0031](decisions/0031-logout-across-hosts.md)). A tombstone read once at creation. No secondary index |
 | Token cache | Items under the session's key (`<session key>/e/<hash>`), sealed, deleted with it: one `Query` by prefix at a logout, on sites with exchange routes |
 | Timeouts | Every store call has a timeout shorter than the proxy's timeout for the check, so a slow store is a down store and the check answers 503 |
 
@@ -456,7 +456,7 @@ Not yet in the suite: the API Gateway authorizer (step 5, in a real account), a 
 | Policy: Cedar as a library, the shared bundle | [0007](decisions/0007-policy.md) |
 | Audit: security class only, never usage | [0008](decisions/0008-audit.md) |
 | The session core as a block | [0009](decisions/0009-session-core-block.md) |
-| Logout: pointer items and tombstones | [0010](decisions/0010-logout-pointer-items.md) |
+| Logout: the tombstones (the pointer items superseded by 0031) | [0010](decisions/0010-logout-pointer-items.md) |
 | Host adapter rules, API Gateway handlers and caching | [0011](decisions/0011-host-adapter-rules.md) |
 | Lambda: the Web Adapter, layers | [0012](decisions/0012-lambda.md) |
 | The authorizer is a native Go handler | [0014](decisions/0014-authorizer-native-go-handler.md) |
@@ -476,7 +476,7 @@ Not yet in the suite: the API Gateway authorizer (step 5, in a real account), a 
 | The image, and what else a deployed first site needs from this repository | [0028](decisions/0028-the-image.md) |
 | The remote runner: the conformance scenarios against a deployed site, and the echo test backend | [0029](decisions/0029-the-remote-runner.md) |
 | The Lambda handlers, the choices of step 5 before atoom's B9 | [0030](decisions/0030-lambda-handlers-step-5-choices.md) |
-| Logout across hosts: end-session, back-channel logout, the lookup, cookies and audit (proposed) | [0031](decisions/0031-logout-across-hosts.md) |
+| Logout across hosts: end-session, back-channel logout, the lookup, cookies and audit | [0031](decisions/0031-logout-across-hosts.md) |
 
 ## 16. Status and next steps
 
@@ -503,7 +503,7 @@ Planned, in order:
 5. **Lambda:** the sign-in handler behind the Web Adapter and the authorizer as a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)), HTTP API first, then REST API. The real-AWS check runs the conformance scenarios through API Gateway ([0020](decisions/0020-conformance-suite.md)). Depends on atoom's B9 ([0025](decisions/0025-first-version-for-the-first-sites.md)): a Go `transport/sqs` driver mounted in the process for audit, because Lambda has no spool sidecar, and a Go `source/ssm` or `source/appconfig` driver for the site file and the policy bundle.
    - **The handlers** (built, [0030](decisions/0030-lambda-handlers-step-5-choices.md)): `session authorizer`, the native handler of both API Gateway products in `internal/apigateway`, with the answers, the context keys and the integration's parameter mapping; the sign-in function is `session serve --check-grpc ''` behind the Web Adapter, with no code of its own. Unit-tested in the process on the fit spike's sample events, with audit through the in-process transport driver.
    - **Waits for B9:** `transport/sqs` as a third audit switch beside `--audit-socket` and `--audit-stdout`, and atoom's Go `source/appconfig` mounted in place of `source/file`, which serves the configuration layer until then (0030); then the packaging under `lambda/` and the real-AWS run.
-   - **Then logout across hosts** ([0031](decisions/0031-logout-across-hosts.md), proposed): the logout lookup by atoom's index entries in place of pointer items, the issuer's end-session also without a live session, the refresh token revoked at the person's logout, both of session's cookies cleared. Built once the owner chooses L1 to L3.
+   - **Then logout across hosts** (built, [0031](decisions/0031-logout-across-hosts.md)): the logout lookup by atoom's index entries in place of pointer items, the issuer's end-session also without a live session, the refresh token revoked at the person's logout (RFC 7009, best effort), both of session's cookies cleared.
 6. **sluis v2 as an issuer** once PAR and `private_key_jwt` land there ([0026](decisions/0026-exchange-targets-what-the-issuer-allows.md)). The scope is resource-client audiences: a route of mode `exchange` on a sluis v2 site names an AWS role, Kubernetes, a database, SSH, a vendor minter or KV, and the site's product APIs use the identity header. It waits for sluis's requirement REQ-EXCH-032, the exchange of a confidential `private_key_jwt` sign-in client's live sign-in token for a resource client (question 3 below). Sites on sluis v1 wait for v2.
 7. **The session core moves into atoom** when sluis's sign-in actor adopts it.
 

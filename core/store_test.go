@@ -66,7 +66,8 @@ func sessionKeyOf(t *testing.T, e *env, id string) []byte {
 	return []byte("s/" + b64(m))
 }
 
-// Back-channel logout (decision 0010): by sid it ends that sid's sessions only; by subject, all the subject's sessions.
+// Back-channel logout (decisions 0010 and 0031): by sid it ends that sid's sessions only; by subject, all the subject's
+// sessions. The sessions are found by their index entries, so a session already gone is not counted.
 func TestLogoutBySidAndBySubject(t *testing.T) {
 	for _, backend := range stores() {
 		t.Run(backend, func(t *testing.T) {
@@ -85,7 +86,7 @@ func TestLogoutBySidAndBySubject(t *testing.T) {
 				t.Fatal("logout by sid ended the wrong sessions")
 			}
 			n, err = e.core.LogoutBy(ctx, iss, "", "alice")
-			if err != nil || n != 3 { // the two members already gone are stale and cost a failed delete
+			if err != nil || n != 1 {
 				t.Fatalf("by subject: %d, %v", n, err)
 			}
 			if alive(a3) || !alive(b1) {
@@ -139,8 +140,9 @@ func TestALogoutDuringTheSignInEndsTheNewSession(t *testing.T) {
 	}
 }
 
-// Parallel sign-ins of one subject all land in its pointer item: a lost race on the pointer is read and tried again.
-func TestParallelSignInsOfOneSubjectAreAllInThePointer(t *testing.T) {
+// Parallel sign-ins of one subject are all found by its index entry: no sign-in reads or rewrites a shared item, so none
+// loses a race (decision 0031; the pointer items of 0010 retried).
+func TestParallelSignInsOfOneSubjectAreAllFound(t *testing.T) {
 	for _, backend := range stores() {
 		t.Run(backend, func(t *testing.T) {
 			e := newEnv(t, backend)
@@ -169,6 +171,41 @@ func TestParallelSignInsOfOneSubjectAreAllInThePointer(t *testing.T) {
 				if _, err := e.core.Load(ctx, id); !errors.Is(err, core.ErrNotFound) {
 					t.Fatalf("a session survived: %v", err)
 				}
+			}
+		})
+	}
+}
+
+// Every put of the session item resends its index entries (decision 0031): a put that left one out would delete it, and a
+// back-channel logout would then miss the session. The idle refresh is such a put.
+func TestTheIdleRefreshKeepsTheIndexEntries(t *testing.T) {
+	for _, backend := range stores() {
+		t.Run(backend, func(t *testing.T) {
+			e := newEnv(t, backend)
+			ctx := context.Background()
+			a := e.signIn(t, "alice", "sid-1")
+			b := e.signIn(t, "alice", "sid-2")
+			e.clock.Add(2 * time.Minute)
+			for _, id := range []string{a, b} {
+				if d := e.core.Check(ctx, req("GET", "/api/x", "Cookie", e.cookie(id))); d.Outcome != core.Allow {
+					t.Fatalf("check: %+v", d)
+				}
+				if s, err := e.core.Load(ctx, id); err != nil || !s.LastSeen.Equal(e.clock.Now().Truncate(time.Second)) {
+					t.Fatalf("not refreshed: %v", err)
+				}
+			}
+			if e.mem != nil {
+				for _, id := range []string{a, b} {
+					if it := e.mem.Item(string(sessionKeyOf(t, e, id))); len(it.GetIndexes()) != 2 {
+						t.Fatalf("index entries after the idle refresh: %v", it.GetIndexes())
+					}
+				}
+			}
+			if n, err := e.core.LogoutBy(ctx, iss, "sid-1", ""); err != nil || n != 1 {
+				t.Fatalf("by sid after the idle refresh: %d, %v", n, err)
+			}
+			if n, err := e.core.LogoutBy(ctx, iss, "", "alice"); err != nil || n != 1 {
+				t.Fatalf("by subject after the idle refresh: %d, %v", n, err)
 			}
 		})
 	}

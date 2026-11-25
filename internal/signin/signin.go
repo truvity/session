@@ -57,6 +57,7 @@ type Handler struct {
 	endpoints struct {
 		PAR        string `json:"pushed_authorization_request_endpoint"`
 		EndSession string `json:"end_session_endpoint"`
+		Revocation string `json:"revocation_endpoint"`
 		IssParam   bool   `json:"authorization_response_iss_parameter_supported"`
 	}
 	log *slog.Logger
@@ -139,32 +140,38 @@ func hashOf(s string) string {
 
 // postForm sends a form with the client's assertion to an endpoint of the issuer and decodes the JSON answer.
 func (h *Handler) postForm(ctx context.Context, endpoint string, v url.Values, out any) (int, error) {
+	status, body, err := h.post(ctx, endpoint, v)
+	if err != nil {
+		return status, err
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return status, errors.New("an answer that is not JSON")
+	}
+	return status, nil
+}
+
+// post sends a form with the client's assertion to an endpoint of the issuer and returns the status and the body.
+func (h *Handler) post(ctx context.Context, endpoint string, v url.Values) (int, []byte, error) {
 	a, err := h.o.Signer.ClientAssertion(ctx, h.o.ClientID, h.o.Issuer, time.Now())
 	if err != nil {
-		return 0, fmt.Errorf("client assertion: %w", err)
+		return 0, nil, fmt.Errorf("client assertion: %w", err)
 	}
 	v.Set("client_id", h.o.ClientID)
 	v.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
 	v.Set("client_assertion", a)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(v.Encode()))
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	res, err := h.o.HTTP.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer func() { _ = res.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	if err != nil {
-		return res.StatusCode, err
-	}
-	if err := json.Unmarshal(body, out); err != nil {
-		return res.StatusCode, errors.New("an answer that is not JSON")
-	}
-	return res.StatusCode, nil
+	return res.StatusCode, body, err
 }
 
 // Login starts a sign-in: a transaction by state, PAR with the client's assertion, then the browser goes to the issuer with
@@ -315,10 +322,12 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, safeReturnTo(tx.ReturnTo), http.StatusFound) //nolint:gosec // G710: a path of this site only (safeReturnTo)
 }
 
-// Logout is the person's own logout (S6): a POST with CSRF, which deletes the session, clears the cookie and sends the browser
-// to the issuer's end-session with id_token_hint (without it Keycloak asks the person to confirm, a finding of the reference
-// stand). A request that asks for JSON (the browser helper's fetch, which cannot follow a cross-origin redirect) gets
-// {"logout_url"} with 200; any other gets a 303 to the same address.
+// Logout is the person's own logout (S6, decision 0031): a POST with CSRF, which deletes the session, revokes its refresh
+// token at the issuer (best effort), clears session's cookies and sends the browser to the issuer's end-session, also when
+// there is no live session, so that "sign out" always ends the issuer's session. id_token_hint goes with it when the session
+// is live (without it Keycloak asks the person to confirm, a finding of the reference stand). A request that asks for JSON
+// (the browser helper's fetch, which cannot follow a cross-origin redirect) gets {"logout_url"} with 200; any other gets a
+// 303 to the same address.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if !h.core.CSRFOK(r.Method, r.Header) {
@@ -327,7 +336,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := h.core.SplitCookies(r.Header)
-	target := h.origin + "/"
+	var hint, refresh string
 	if id != "" {
 		s, err := h.core.Load(ctx, id)
 		switch {
@@ -337,26 +346,57 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.core.Emit(ctx, core.Event{Kind: core.EventLogout, Subject: s.Subject, Issuer: s.Issuer})
-			if h.endpoints.EndSession != "" {
-				q := url.Values{"client_id": {h.o.ClientID}, "post_logout_redirect_uri": {h.origin + "/"}}
-				if s.IDToken != "" {
-					q.Set("id_token_hint", s.IDToken)
-				}
-				target = h.endpoints.EndSession + "?" + q.Encode()
-			}
+			hint, refresh = s.IDToken, s.RefreshToken
 		case errors.Is(err, core.ErrNotFound):
 		default:
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "unavailable"})
 			return
 		}
 	}
+	if refresh != "" {
+		h.revoke(ctx, refresh)
+	}
+	target := h.origin + "/"
+	if h.endpoints.EndSession != "" {
+		q := url.Values{"client_id": {h.o.ClientID}, "post_logout_redirect_uri": {h.origin + "/"}}
+		if hint != "" {
+			q.Set("id_token_hint", hint)
+		}
+		target = h.endpoints.EndSession + "?" + q.Encode()
+	}
 	w.Header().Add("Set-Cookie", h.core.ClearSessionCookie())
+	w.Header().Add("Set-Cookie", h.core.ClearBindingCookie())
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, http.StatusOK, map[string]string{"logout_url": target})
 		return
 	}
 	noStore(w)
 	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// revoke revokes a refresh token at the issuer's revocation endpoint (RFC 7009) with the client's assertion, best effort and
+// bounded by the exchange timeout (decision 0031): only when the issuer names the endpoint; a failure is counted and logged,
+// and the logout goes on, because the session is already deleted.
+func (h *Handler) revoke(ctx context.Context, token string) {
+	if h.endpoints.Revocation == "" {
+		return
+	}
+	bound := h.core.Rules().ExchangeTimeout
+	if bound <= 0 {
+		bound = core.DefaultExchangeTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, bound)
+	defer cancel()
+	status, _, err := h.post(ctx, h.endpoints.Revocation, url.Values{"token": {token}, "token_type_hint": {"refresh_token"}})
+	if err == nil && status == http.StatusOK {
+		return
+	}
+	h.core.Metrics().CountRevocationFailed()
+	if err != nil {
+		h.log.Info("logout: the refresh token could not be revoked", "error", err.Error())
+		return
+	}
+	h.log.Info("logout: the issuer refused to revoke the refresh token", "status", status)
 }
 
 const backChannelEvent = "http://schemas.openid.net/event/backchannel-logout"

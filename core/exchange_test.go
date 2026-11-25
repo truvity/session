@@ -315,6 +315,13 @@ func TestAnOldSignInTokenIsRefreshedFirst(t *testing.T) {
 			if d := e.core.Check(ctx, req("GET", "/api/billing/x", "Cookie", e.cookie(id))); d.Outcome != core.Allow || iss.refreshes.Load() != 1 {
 				t.Fatalf("refreshed again: %d", iss.refreshes.Load())
 			}
+			// The write of the rotated tokens resent the index entries (decision 0031): a back-channel logout still finds it.
+			if n, err := e.core.LogoutBy(ctx, "https://issuer.example.test", "sid-1", ""); err != nil || n != 1 {
+				t.Fatalf("logout after the refresh: %d, %v", n, err)
+			}
+			if _, err := e.core.Load(ctx, id); !errors.Is(err, core.ErrNotFound) {
+				t.Fatalf("the session survived: %v", err)
+			}
 		})
 	}
 }
