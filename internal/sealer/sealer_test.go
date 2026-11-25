@@ -201,3 +201,21 @@ func TestTheRulesAllowSigningOnlyUnderTheTokenPurposes(t *testing.T) {
 		t.Fatal("a rotation was allowed")
 	}
 }
+
+func TestThePseudonymKeyIsTheEpochsOwn(t *testing.T) {
+	ctx := context.Background()
+	s := sealertest.New(t).(*sealer.Sealer)
+	one, err := s.Pseudonym(ctx, "session-pseudonym-v1", []byte("input"), 202611)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, _ := s.Pseudonym(ctx, "session-pseudonym-v1", []byte("input"), 202611)
+	next, _ := s.Pseudonym(ctx, "session-pseudonym-v1", []byte("input"), 202612)
+	label, _ := s.Pseudonym(ctx, "another-label", []byte("input"), 202611)
+	if len(one) != 48 || !bytes.Equal(one, again) || bytes.Equal(one, next) || bytes.Equal(one, label) {
+		t.Fatalf("pseudonyms %x %x %x %x", one, again, next, label)
+	}
+	if _, err := s.Pseudonym(ctx, "session-pseudonym-v1", []byte("input"), 0); err == nil {
+		t.Fatal("a pseudonym without an epoch")
+	}
+}

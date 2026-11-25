@@ -24,10 +24,13 @@ require (
 	github.com/truvity/atoom/key/awskms v0.6.0
 	github.com/truvity/atoom/key/software v0.6.0
 	github.com/truvity/atoom/policy v0.6.0
+	github.com/truvity/atoom/socket v0.6.0
 	github.com/truvity/atoom/source v0.6.0
 	github.com/truvity/atoom/source/file v0.6.0
 	github.com/truvity/atoom/store v0.6.0
 	github.com/truvity/atoom/store/dynamodb v0.6.0
+	github.com/truvity/atoom/transport v0.6.0
+	github.com/truvity/audit/emitter v0.19.0
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/oauth2 v0.38.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1
@@ -51,9 +54,11 @@ require (
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/go-json-experiment/json v1.27.2 // indirect
+	github.com/gowebpki/jcs v1.0.2 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	golang.org/x/exp v0.0.0-20220921023135-46d9e7742f1e // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )

@@ -1,13 +1,14 @@
 // Command session is the session service: the sign-in paths and the check, for Envoy over gRPC (--check-grpc) and HTTP
 // (--check-http) and for nginx's auth_request (--check-nginx), with the exchange client and the identity header for the route modes exchange and identity-header.
 //
-//	session serve --config-dir DIR --dynamodb-table NAME [--key-dir DIR] [--key PURPOSE=DRIVER[:KEY] ...] [flags]
+//	session serve --config-dir DIR --dynamodb-table NAME [--key-dir DIR] [--key PURPOSE=DRIVER[:KEY] ...] [--audit-socket PATH] [flags]
 //	session check --site FILE      validate a site file
 //	session version
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/truvity/atoom/key/awskms"
 	sourcev1 "github.com/truvity/atoom/source/gen/atoom/source/v1alpha1"
+	"github.com/truvity/atoom/transport/gen/atoom/transport/v1alpha1/transportv1alpha1connect"
 
 	"github.com/truvity/session/core"
 	"github.com/truvity/session/internal/atoomx"
@@ -42,7 +44,8 @@ import (
 	"github.com/truvity/session/internal/site"
 )
 
-var version = "dev"
+// version is session's release, a semantic version: the audit records name it (metadata.product.version).
+var version = "0.0.0-dev"
 
 func main() {
 	slog.SetDefault(slog.New(quietRefusals{slog.NewJSONHandler(os.Stderr, nil)}))
@@ -94,6 +97,7 @@ type serveFlags struct {
 	storeTimeout, exchangeTimeout    time.Duration
 	keys                             listFlag
 	kmsAliasPrefix, kmsEndpoint      string
+	auditSocket                      string
 }
 
 // listFlag is a flag that may be given more than once.
@@ -112,6 +116,8 @@ func serve(args []string) error {
 		"repeatable; a purpose not named is on software")
 	fs.StringVar(&f.kmsAliasPrefix, "kms-alias-prefix", "", "the alias prefix of the KMS keys of --key PURPOSE=awskms; empty is session/<site>")
 	fs.StringVar(&f.kmsEndpoint, "kms-endpoint", "", "an AWS KMS endpoint other than AWS's")
+	fs.StringVar(&f.auditSocket, "audit-socket", "", "the emit socket of atoom's transport port (a transport driver such as transport-spool: DIR/emit.sock), "+
+		"to the audit writer of the environment; empty writes each security-audit record as one JSON line to stdout, refused in production")
 	fs.StringVar(&f.environment, "environment", "development", "development, staging or production")
 	fs.StringVar(&f.table, "dynamodb-table", "", "the DynamoDB table of the store driver")
 	fs.StringVar(&f.endpoint, "dynamodb-endpoint", "", "a DynamoDB endpoint other than AWS's (DynamoDB Local)")
@@ -259,8 +265,12 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
+	auditor, err := openAudit(a, f, sf, sb.Sealer)
+	if err != nil {
+		return nil, err
+	}
 	c, err := core.New(core.Options{Rules: rules, Items: st.Items, Seal: sb.Sealer, Policy: pol, Issuer: issuer, Identity: identity,
-		Audit: audit.NewLines(os.Stdout)})
+		Audit: auditor})
 	if err != nil {
 		return nil, err
 	}
@@ -273,6 +283,30 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	a.signin = h
 	ok = true
 	return a, nil
+}
+
+// openAudit is the emitter of truvity/audit over the transport port (decision 0023): the emit socket of the environment's transport
+// driver, or the driver Lines in this process, which writes each record as one JSON line to stdout and is refused in production.
+// The pseudonyms are the seal block's.
+func openAudit(a *app, f serveFlags, sf *site.File, seal *sealer.Sealer) (*audit.Auditor, error) {
+	var tr transportv1alpha1connect.TransportServiceClient
+	if f.auditSocket != "" {
+		tr = audit.Socket(f.auditSocket)
+		slog.Info("audit", "transport", "socket", "socket", f.auditSocket)
+	} else {
+		if f.environment == "production" {
+			return nil, errors.New("--audit-socket is required in production: the records go to the audit writer of the environment")
+		}
+		client, stop := audit.NewLines(os.Stdout).Mount()
+		a.closers = append(a.closers, stop)
+		tr = client
+		slog.Info("audit", "transport", "lines", "to", "stdout")
+	}
+	bundle := ""
+	if sf.Policy != nil {
+		bundle = sf.Policy.Bundle
+	}
+	return audit.New(audit.Options{Transport: tr, Pseudonyms: seal, Release: version, Scope: f.environment, Policy: bundle})
 }
 
 func (a *app) run(ctx context.Context, f serveFlags) error {

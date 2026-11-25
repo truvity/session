@@ -115,7 +115,7 @@ const (
 )
 
 // Auditor takes security-audit events. A check never waits on it for a decision: the core emits and goes on, and counts an
-// event the Auditor refused. The emitter of truvity/audit is planned; internal/audit has the stand-in.
+// event the Auditor refused. internal/audit is the emitter of truvity/audit over atoom's transport port (decision 0023).
 type Auditor interface {
 	Emit(ctx context.Context, e Event) error
 }

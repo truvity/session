@@ -107,6 +107,7 @@ func TestConformance(t *testing.T) {
 			st := newStand(t, kc)
 			h.start(t, st)
 			scenarios(t, h, st, newTab(browser, t, st.origin))
+			st.audit.check(t, st.person)
 		})
 	}
 }
