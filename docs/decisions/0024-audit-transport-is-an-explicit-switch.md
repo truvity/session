@@ -1,6 +1,6 @@
 # 0024. The audit transport is an explicit switch, not a value of `--environment`
 
-Status: proposed; if accepted, partly supersedes [0023](0023-audit-emitter.md)
+Status: accepted, 2026-11-25 (owner decision on the pull request); partly supersedes [0023](0023-audit-emitter.md)
 Date: 2026-11-25
 
 ## Context
@@ -33,4 +33,4 @@ Date: 2026-11-25
 
 ## Open
 
-- Whether `--environment` keeps its name once it is only the scope of the log (atoom 0.7.0), or becomes `--audit-scope`.
+Nothing. Decided by the owner on 2026-11-25: `--environment` becomes `--audit-scope`, a breaking rename, in the change that moves session to atoom 0.7.0; unset, the scope is the label `local`.
