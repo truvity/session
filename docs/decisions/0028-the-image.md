@@ -1,6 +1,6 @@
 # 0028. The image of session, and what else a deployed first site needs from this repository
 
-Status: proposed, 2026-11-25 (for the owner's decision on the pull request)
+Status: accepted, 2026-11-25 (owner decision on the pull request)
 Date: 2026-11-25
 
 Answers the first Open line of [0025](0025-first-version-for-the-first-sites.md), how the binary and the image are built and published, and lists what else step 4 needs from this repository before its done-line can be checked against a deployed site.
