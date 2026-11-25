@@ -46,7 +46,7 @@ func wrapping(t testing.TB) keyv1alpha1connect.KeyStoreServiceClient {
 	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: the key driver wants its state directory private
 		t.Fatal(err)
 	}
-	keys, err := atoomx.SoftwareKeys(dir, sealer.KeyPurposes(), "development")
+	keys, err := atoomx.SoftwareKeys(dir, sealer.KeyPurposes())
 	if err != nil {
 		t.Fatal(err)
 	}

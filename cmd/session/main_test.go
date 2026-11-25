@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Decision 0024: exactly one of --audit-socket and --audit-stdout, whatever --environment says; the environment is a label only.
+// Decision 0024: exactly one of --audit-socket and --audit-stdout, whatever --audit-scope says; the scope is a label only (decision 0027).
 func TestTheAuditTransportIsAnExplicitSwitch(t *testing.T) {
 	tr, stop, err := auditTransport("", true, &bytes.Buffer{})
 	if err != nil || tr == nil || stop == nil {

@@ -34,10 +34,11 @@ type Keys struct {
 	Stop func()
 }
 
-// SoftwareKeys mounts atoom's key/software driver over a state directory, with the purposes session declares. environment names
-// the installation for the driver's journal (development, staging or production).
-func SoftwareKeys(stateDir string, purposes []purpose.Declaration, environment string) (*Keys, error) {
-	svc, err := software.New(software.Options{StateDir: stateDir, Purposes: purposes, Environment: environment})
+// SoftwareKeys mounts atoom's key/software driver over a state directory, with the purposes session declares. The driver knows
+// nothing of the installation it runs in (atoom 0.7.0): a deployment that must not hold keys in files puts its purposes on AWS KMS
+// (--key PURPOSE=awskms), and then this driver is not mounted.
+func SoftwareKeys(stateDir string, purposes []purpose.Declaration) (*Keys, error) {
+	svc, err := software.New(software.Options{StateDir: stateDir, Purposes: purposes})
 	if err != nil {
 		return nil, err
 	}
