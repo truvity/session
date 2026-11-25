@@ -1,6 +1,6 @@
 # 0019. Signing keys on AWS KMS: the choices of step 3.3
 
-Status: accepted, 2026-11-24 (owner decision on the pull request of step 3.3)
+Status: accepted, 2026-11-24 (owner decision on the pull request of step 3.3); the timing of its rotation build is clarified by [0025](0025-first-version-for-the-first-sites.md): no key rotation at the first sites, and the previous key in the JWKS comes with atoom's B8b, before the first site that rotates
 Date: 2026-11-24
 
 Builds what [0005](0005-tokens-per-api-and-issuers.md) and [0006](0006-built-on-atoom.md) decide for the key port: the `private_key_jwt` key, and the key of the identity header of [0016](0016-exchange-client-and-identity-header.md), on atoom's `key/awskms` driver where the key must not leave, chosen at start.
