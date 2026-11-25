@@ -35,6 +35,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0028](0028-the-image.md) | The image of session, and what else a deployed first site needs from this repository |
 | [0029](0029-the-remote-runner.md) | The remote runner: the conformance scenarios against a deployed site, and the echo test backend |
 | [0030](0030-lambda-handlers-step-5-choices.md) | The Lambda handlers: the choices of step 5 before atoom's B9 |
+| [0031](0031-logout-across-hosts.md) | Logout across hosts: end-session, back-channel logout, the lookup, cookies and audit (proposed; owner choices L1 to L3) |
 
 ## How the records are kept
 
