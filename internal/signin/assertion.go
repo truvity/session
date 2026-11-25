@@ -2,9 +2,7 @@ package signin
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,10 +11,10 @@ import (
 	"connectrpc.com/connect"
 	"github.com/go-jose/go-jose/v4"
 
-	keyv1 "github.com/truvity/atoom/key/gen/atoom/key/v1alpha1"
-	"github.com/truvity/atoom/key/gen/atoom/key/v1alpha1/keyv1alpha1connect"
+	"github.com/truvity/atoom/blocks/token"
+	tokenv1 "github.com/truvity/atoom/blocks/token/gen/atoom/token/v1alpha1"
+	"github.com/truvity/atoom/blocks/token/gen/atoom/token/v1alpha1/tokenv1alpha1connect"
 	"github.com/truvity/atoom/key/purpose"
-	"github.com/truvity/atoom/key/signature"
 
 	"github.com/truvity/session/core"
 )
@@ -30,7 +28,10 @@ const (
 	PurposeIdentityHeader = "identity-header"
 )
 
-// Purposes are the key purposes session declares.
+// clientAssertionType is the JWS typ of the client assertion.
+const clientAssertionType = "JWT"
+
+// Purposes are the key purposes session declares for its signing keys, each to the driver that holds it.
 func Purposes() []purpose.Declaration {
 	sign := []purpose.Operation{purpose.Sign}
 	return []purpose.Declaration{
@@ -39,88 +40,70 @@ func Purposes() []purpose.Declaration {
 	}
 }
 
-// KeyClients gives the client of the key driver that holds a purpose: each purpose may be on its own driver, software or AWS KMS,
-// chosen at start (decision 0019). atoomx.KeySet is one.
-type KeyClients interface {
-	For(purpose string) keyv1alpha1connect.KeyStoreServiceClient
+// TokenPurposes are the same purposes declared to atoom's token block (decision 0022): ES256, one type each, and the kid the key
+// port's key_id (decisions 0016 and 0019).
+func TokenPurposes() []token.Purpose {
+	return []token.Purpose{
+		{Name: PurposeClientAssertion, Algorithm: purpose.ES256, Types: []string{clientAssertionType}, Kid: token.KidKeyID},
+		{Name: PurposeIdentityHeader, Algorithm: purpose.ES256, Types: []string{core.IdentityType}, Kid: token.KidKeyID},
+	}
 }
 
-// Signers returns the signer of the client assertion and the signer of the identity header, each on its purpose's driver, and
-// makes sure each key exists. A key on AWS KMS is never made here: one the deployment has not made fails the start.
-func Signers(ctx context.Context, keys KeyClients) (client, identity Signer, err error) {
-	client = Signer{Keys: keys.For(PurposeClientAssertion), Purpose: PurposeClientAssertion}
-	if err := client.Ensure(ctx); err != nil {
-		return Signer{}, Signer{}, fmt.Errorf("client key (%s): %w", PurposeClientAssertion, err)
+// Signers returns the signer of the client assertion and the signer of the identity header over the token block. The block has
+// read both keys at its start (sealer.Open), so a key the deployment has not made has already failed it.
+func Signers(tokens tokenv1alpha1connect.TokenServiceClient) (client, identity Signer, err error) {
+	if tokens == nil {
+		return Signer{}, Signer{}, errors.New("signin: no token block")
 	}
-	identity = Signer{Keys: keys.For(PurposeIdentityHeader), Purpose: PurposeIdentityHeader, Typ: core.IdentityType}
-	if err := identity.Ensure(ctx); err != nil {
-		return Signer{}, Signer{}, fmt.Errorf("identity header key (%s): %w", PurposeIdentityHeader, err)
-	}
-	return client, identity, nil
+	return Signer{Tokens: tokens, Purpose: PurposeClientAssertion},
+		Signer{Tokens: tokens, Purpose: PurposeIdentityHeader, Typ: core.IdentityType}, nil
 }
 
-// Signer signs JWTs with a key of the key port. The key never leaves the driver: the signer hashes, the port signs the digest,
-// and the DER signature is turned into the raw r||s of a JWS.
+// Signer signs JWTs of one purpose through atoom's token block, which signs through the seal block and the key port. The key
+// never leaves its driver.
 type Signer struct {
-	Keys    keyv1alpha1connect.KeyStoreServiceClient
+	Tokens  tokenv1alpha1connect.TokenServiceClient
 	Purpose string
 	// Typ is the JWS typ; empty is JWT. The identity header's is core.IdentityType.
 	Typ string
 }
 
-// Ensure makes the key if the driver has none yet.
-func (s Signer) Ensure(ctx context.Context) error {
-	_, err := s.Keys.Ensure(ctx, connect.NewRequest(&keyv1.EnsureRequest{Purpose: s.Purpose, Algorithm: purpose.ES256}))
-	return err
+func (s Signer) typ() string {
+	if s.Typ == "" {
+		return clientAssertionType
+	}
+	return s.Typ
 }
 
 // JWK is the public key as a JSON Web Key, with the key port's key id as kid.
 func (s Signer) JWK(ctx context.Context) (jose.JSONWebKey, error) {
-	res, err := s.Keys.PublicKey(ctx, connect.NewRequest(&keyv1.PublicKeyRequest{Purpose: s.Purpose}))
+	res, err := s.Tokens.KeySet(ctx, connect.NewRequest(&tokenv1.KeySetRequest{Purposes: []string{s.Purpose}}))
 	if err != nil {
 		return jose.JSONWebKey{}, err
 	}
-	pub, err := x509.ParsePKIXPublicKey(res.Msg.GetSpkiDer())
+	keys := res.Msg.GetKeys()
+	if len(keys) != 1 {
+		return jose.JSONWebKey{}, fmt.Errorf("signin: the key set of one purpose has %d keys", len(keys))
+	}
+	pub, err := x509.ParsePKIXPublicKey(keys[0].GetSpkiDer())
 	if err != nil {
 		return jose.JSONWebKey{}, err
 	}
-	return jose.JSONWebKey{Key: pub, KeyID: res.Msg.GetKeyId(), Algorithm: purpose.ES256, Use: "sig"}, nil
+	return jose.JSONWebKey{Key: pub, KeyID: keys[0].GetKid(), Algorithm: keys[0].GetAlgorithm(), Use: "sig"}, nil
 }
 
-func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
-
-// Sign makes a compact JWS of the claims, of the signer's typ.
+// Sign makes a compact JWS of the claims, of the signer's typ: the header alg, kid and typ, the payload the claims as JSON with
+// their names in order.
 func (s Signer) Sign(ctx context.Context, claims map[string]any) (string, error) {
-	jwk, err := s.JWK(ctx)
-	if err != nil {
-		return "", err
-	}
-	typ := s.Typ
-	if typ == "" {
-		typ = "JWT"
-	}
-	h, err := json.Marshal(map[string]string{"alg": purpose.ES256, "typ": typ, "kid": jwk.KeyID})
-	if err != nil {
-		return "", err
-	}
 	c, err := json.Marshal(claims)
 	if err != nil {
 		return "", err
 	}
-	in := b64(h) + "." + b64(c)
-	d := sha256.Sum256([]byte(in))
-	res, err := s.Keys.Sign(ctx, connect.NewRequest(&keyv1.SignRequest{Purpose: s.Purpose, Digest: d[:], Algorithm: purpose.ES256}))
+	res, err := s.Tokens.Sign(ctx, connect.NewRequest(&tokenv1.SignRequest{Purpose: s.Purpose, Typ: s.typ(), ClaimsJson: c}))
 	if err != nil {
 		return "", err
 	}
-	if res.Msg.GetKeyId() != jwk.KeyID {
-		return "", errors.New("signin: the key changed between the key id and the signature")
-	}
-	raw, err := signature.DERToRaw(purpose.ES256, res.Msg.GetSignatureDer())
-	if err != nil {
-		return "", err
-	}
-	return in + "." + b64(raw), nil
+	return res.Msg.GetToken(), nil
 }
 
 // ClientAssertion is a private_key_jwt assertion (RFC 7523): issuer and subject the client, audience the issuer's identifier

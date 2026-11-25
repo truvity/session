@@ -20,9 +20,12 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"golang.org/x/oauth2"
+
+	tokenv1 "github.com/truvity/atoom/blocks/token/gen/atoom/token/v1alpha1"
 
 	"github.com/truvity/session/core"
 )
@@ -459,23 +462,20 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		"groups": groups, "expires_at": ends.UTC().Format(time.RFC3339)})
 }
 
-// JWKS publishes the service's public keys: the key of the client assertion, which the issuer reads, and the key of the
-// identity header, which apps read. Each has its own kid; an app tells its key by the kid of the header it verifies.
+// JWKS publishes the service's public keys, the token block's key set: the key of the client assertion, which the issuer
+// reads, and the key of the identity header, which apps read. Each has its own kid; an app tells its key by the kid of the
+// header it verifies.
 func (h *Handler) JWKS(w http.ResponseWriter, r *http.Request) {
-	signers := []Signer{h.o.Signer}
+	purposes := []string{h.o.Signer.Purpose}
 	if h.o.Identity != nil {
-		signers = append(signers, *h.o.Identity)
+		purposes = append(purposes, h.o.Identity.Purpose)
 	}
-	var set jose.JSONWebKeySet
-	for _, s := range signers {
-		k, err := s.JWK(r.Context())
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "unavailable"})
-			return
-		}
-		set.Keys = append(set.Keys, k)
+	res, err := h.o.Signer.Tokens.KeySet(r.Context(), connect.NewRequest(&tokenv1.KeySetRequest{Purposes: purposes}))
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "unavailable"})
+		return
 	}
 	w.Header().Set("Cache-Control", "max-age=300")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(set)
+	_, _ = w.Write(append(res.Msg.GetJwksJson(), '\n'))
 }

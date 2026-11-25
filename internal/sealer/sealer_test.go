@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/truvity/atoom/blocks/seal"
 	"github.com/truvity/atoom/key/awskms"
 
 	"github.com/truvity/session/core"
@@ -178,5 +179,25 @@ func TestTheWrappingKeyOnAWSKMS(t *testing.T) {
 	t.Cleanup(ks.Stop)
 	if _, err := sealer.Open(ctx, sealer.Options{Keys: ks.For(sealer.WrappingPurpose), Items: items, Installation: "session/docs"}); err == nil {
 		t.Fatal("a signing key served as the wrapping key")
+	}
+}
+
+// The seal block's rules allow Sign and PublicKey only under the token purposes they name: the token block's.
+func TestTheRulesAllowSigningOnlyUnderTheTokenPurposes(t *testing.T) {
+	ctx := context.Background()
+	r := sealer.Rules("client-assertion")
+	for _, op := range []seal.Op{seal.OpSign, seal.OpPublicKey} {
+		if _, err := r.Decide(ctx, seal.Request{Op: op, Purpose: "client-assertion"}); err != nil {
+			t.Fatalf("%s under a token purpose: %v", op, err)
+		}
+		if _, err := r.Decide(ctx, seal.Request{Op: op, Purpose: "identity-header"}); err == nil {
+			t.Fatalf("%s under a purpose not named", op)
+		}
+		if _, err := sealer.Rules().Decide(ctx, seal.Request{Op: op, Purpose: "client-assertion"}); err == nil {
+			t.Fatalf("%s with no token purpose", op)
+		}
+	}
+	if _, err := r.Decide(ctx, seal.Request{Op: seal.OpRotate, Purpose: "client-assertion"}); err == nil {
+		t.Fatal("a rotation was allowed")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/truvity/atoom/key/awskms"
 	"github.com/truvity/atoom/key/gen/atoom/key/v1alpha1/keyv1alpha1connect"
 	"github.com/truvity/atoom/key/purpose"
+	"github.com/truvity/atoom/key/route"
 )
 
 // The key drivers session can run for a purpose (design section 9, decision 0019). Which one holds each purpose is a start-up
@@ -101,6 +102,10 @@ type KeySet struct {
 // For returns the client of the driver that holds the purpose.
 func (k *KeySet) For(name string) keyv1alpha1connect.KeyStoreServiceClient { return k.clients[name] }
 
+// Route is one client of the key port in front of the mounted drivers (atoom's key/route): each call goes to the driver that
+// holds its purpose, so the seal block takes one client whatever driver each purpose is on.
+func (k *KeySet) Route() (*route.Client, error) { return route.New(k.clients) }
+
 // Driver names the driver that holds the purpose.
 func (k *KeySet) Driver(name string) string { return k.drivers[name] }
 
@@ -114,8 +119,8 @@ func (k *KeySet) Stop() {
 // OpenKeys mounts one driver of each kind that holds a purpose, each declared only the purposes it holds, so a driver refuses
 // the others. The KMS driver never makes a key (CreateKeys off): the deployment makes the keys and holds their key policy, and the
 // role of session needs kms:DescribeKey and kms:GetPublicKey, kms:Sign for a signing purpose and kms:DeriveSharedSecret for the
-// seal block's wrapping key (ECC_NIST_P384, KEY_AGREEMENT). Nothing is called here; Ensure of each purpose (signin.Signer.Ensure,
-// sealer.Open) finds its key at start.
+// seal block's wrapping key (ECC_NIST_P384, KEY_AGREEMENT). Nothing is called here; the seal block (sealer.Open) ensures the
+// key of each purpose at start.
 func OpenKeys(o KeyOptions) (*KeySet, error) {
 	ks := &KeySet{clients: map[string]keyv1alpha1connect.KeyStoreServiceClient{}, drivers: map[string]string{}}
 	ok := false
