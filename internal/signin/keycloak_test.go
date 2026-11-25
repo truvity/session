@@ -174,7 +174,7 @@ func newStand(t *testing.T, opts ...func(*standConfig)) *stand {
 	}
 	c, err := core.New(core.Options{Items: items, Seal: sealer, Audit: st.audit, Issuers: map[string]core.Issuer{st.issuer: issuer}, Identity: identity,
 		Now:   func() time.Time { return time.Now().Add(time.Duration(st.ahead.Load())) },
-		Rules: core.Rules{Site: "docs", Host: host, Routes: cfg.routes}})
+		Rules: core.Rules{Site: "docs", Host: host, Routes: cfg.routes, Issuers: []core.SiteIssuer{{ID: "corp", Identifier: st.issuer}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestSignInWithPARAndPrivateKeyJWTAgainstKeycloak(t *testing.T) {
 	var who map[string]any
 	_ = json.NewDecoder(res.Body).Decode(&who)
 	_ = res.Body.Close()
-	if res.StatusCode != http.StatusOK || who["sub"] != s.Subject || who["email"] != "alice@example.test" || who["expires_at"] == "" {
+	if res.StatusCode != http.StatusOK || who["idp"] != "corp" || who["sub"] != s.Subject || who["email"] != "alice@example.test" || who["expires_at"] == "" {
 		t.Fatalf("whoami %d %v", res.StatusCode, who)
 	}
 	if k := st.audit.kinds(); len(k) != 1 || k[0] != "sign-in:" {
@@ -656,14 +656,14 @@ func TestTheIdentityHeaderVerifiesWithTheJWKS(t *testing.T) {
 		t.Fatal(err)
 	}
 	var c struct {
-		Iss, Aud, Sub, Email string
-		Groups               []string
-		Iat, Exp             int64
+		Iss, Aud, Idp, Sub, Email string
+		Groups                    []string
+		Iat, Exp                  int64
 	}
 	if err := json.Unmarshal(payload, &c); err != nil {
 		t.Fatal(err)
 	}
-	if c.Iss != st.core.Origin() || c.Aud != "legacy-app" || c.Sub == "" || c.Email != st.person.Email ||
+	if c.Iss != st.core.Origin() || c.Aud != "legacy-app" || c.Idp != "corp" || c.Sub == "" || c.Email != st.person.Email ||
 		!slices.Equal(c.Groups, []string{"admins"}) || c.Exp-c.Iat != 60 {
 		t.Fatalf("claims %+v", c)
 	}

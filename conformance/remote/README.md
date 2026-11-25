@@ -44,7 +44,7 @@ Each `KEY=VALUE` argument becomes `SESSION_REMOTE_<KEY>`; the variables may be s
 | `SITE_FILE` | The site file the site runs, for its name and lifetimes; `conformance/remote/site.yaml` when not given |
 | `IDP` | The alias of the brokered provider at Keycloak, added to the sign-in as `kc_idp_hint` |
 | `HINT` | The test identity, added as `login_hint` and picked at mimic's chooser |
-| `EMAIL` | The e-mail address `whoami` must name; any when not given |
+| `EMAIL` | The e-mail address `whoami` must name; any when not given. `whoami` and the identity header must name the issuer's id as `idp` |
 | `MIMIC`, `MIMIC_TOKEN_FILE` | mimic's public URL, and a file holding the token for its `POST /session` (or `SESSION_REMOTE_MIMIC_TOKEN`) |
 | `USERNAME` | A person of the realm itself, signed in at Keycloak's form, with `SESSION_REMOTE_PASSWORD` |
 | `CA` | A PEM file of the CA of the site's or the issuer's certificate, trusted by the runner and the browser |

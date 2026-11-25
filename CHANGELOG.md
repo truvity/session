@@ -5,6 +5,12 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### The claim `idp`
+
+- Added (not breaking): the identity header (`X-Session-Identity`) and `/_session/whoami` carry `idp`, the site file's id of the session's issuer ([0035](docs/decisions/0035-the-idp-claim.md), owner decision D115 A), on every site, with one issuer too. An app that keys data by person uses `idp` and `sub` together.
+- Go API: `core.Rules.Issuers` is a list of `core.SiteIssuer` (the id and the identifier), no longer of identifiers.
+- The conformance suite checks `idp` in whoami and in the identity header, locally and through the remote runner (the id `ISSUER=` names).
+
 ### atoom 0.9.0, audit 0.21.0 and the audit catalogue
 
 - **Every atoom module at 0.9.0** and `truvity/audit/emitter` at 0.21.0 ([0036](docs/decisions/0036-atoom-0.9.0-and-the-audit-catalogue.md), owner decision D118 A). `go list -m all` lists one atoom version. `spike/` keeps its pins. The transport message is atoom's generic `Message{id, payload}` (B12). Its bytes are the same as before, so no flag, record or queue changes. `internal/audit.Lines` refuses an empty message with `message.id` and `message.payload`.

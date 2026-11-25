@@ -444,6 +444,10 @@ func TestAnIdentityHeaderRouteCarriesTheSignedIdentity(t *testing.T) {
 	d := e.core.Check(ctx, req("GET", "/api/legacy/x", "Cookie", e.cookie(id), "X-Session-Identity", "forged"))
 	c := identity(t, d)
 	now := e.clock.Now().Unix()
+	// The rules name no issuer here: idp is there, empty (decision 0035: every header has it).
+	if idp, ok := c["idp"]; !ok || idp != "" {
+		t.Fatalf("idp %v", c)
+	}
 	if c["iss"] != "https://docs.example.test" || c["aud"] != "legacy-app" || c["sub"] != "alice" || c["name"] != "Alice" ||
 		c["email"] != "alice@example.test" || c["iat"] != float64(now) || c["exp"] != float64(now+60) {
 		t.Fatalf("claims %v", c)
@@ -524,7 +528,7 @@ func TestTheExchangeGoesToTheSessionsIssuer(t *testing.T) {
 	const corpURL, partnerURL = "https://issuer.example.test", "https://partner.example.test"
 	e := newEnv(t, "storetest", func(o *core.Options) {
 		o.Rules = exchangeRules()
-		o.Rules.Issuers = []string{corpURL, partnerURL}
+		o.Rules.Issuers = []core.SiteIssuer{{ID: "corp", Identifier: corpURL}, {ID: "partner", Identifier: partnerURL}}
 		o.Issuers = map[string]core.Issuer{corpURL: corp, partnerURL: partner}
 		o.Identity = &fakeSigner{}
 	})
@@ -538,8 +542,12 @@ func TestTheExchangeGoesToTheSessionsIssuer(t *testing.T) {
 	if corp.exchanges.Load() != 0 || corp.refreshes.Load() != 0 || partner.exchanges.Load() != 1 || partner.refreshes.Load() != 1 {
 		t.Fatalf("corp %d/%d, partner %d/%d", corp.exchanges.Load(), corp.refreshes.Load(), partner.exchanges.Load(), partner.refreshes.Load())
 	}
+	// The identity header names the session's issuer by its id in the site (decision 0035).
+	if c := identity(t, e.core.Check(ctx, req("GET", "/api/legacy/x", "Cookie", e.cookie(id)))); c["idp"] != "partner" || c["sub"] != "bob" {
+		t.Fatalf("identity claims %v", c)
+	}
 	missing := exchangeRules()
-	missing.Issuers = []string{corpURL, partnerURL}
+	missing.Issuers = []core.SiteIssuer{{ID: "corp", Identifier: corpURL}, {ID: "partner", Identifier: partnerURL}}
 	if _, err := core.New(core.Options{Rules: missing, Items: e.items, Seal: e.seal, Identity: &fakeSigner{},
 		Issuers: map[string]core.Issuer{corpURL: corp}}); err == nil {
 		t.Fatal("started without the partner's client")

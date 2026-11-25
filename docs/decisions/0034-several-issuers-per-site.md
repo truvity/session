@@ -106,5 +106,5 @@ The suite gets a stand of two issuers (two realms of the test Keycloak, each wit
 
 ## Open
 
-- Whether the identity header and `/_session/whoami` should name the issuer (an `idp` claim, the issuer's id or identifier), so that an app tells people of different issuers apart without trusting `sub` alone. Not built: it adds a claim apps would rely on, and needs an owner decision.
+- Decided by [0035](0035-the-idp-claim.md): the claim `idp`. Whether the identity header and `/_session/whoami` should name the issuer (an `idp` claim, the issuer's id or identifier), so that an app tells people of different issuers apart without trusting `sub` alone. Not built: it adds a claim apps would rely on, and needs an owner decision.
 - A site's own sign-in template, a document of the source port beside `error_page`: when a site asks for one.

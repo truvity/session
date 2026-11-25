@@ -132,6 +132,8 @@ type target struct {
 	cookieName     string
 	// email is the e-mail address whoami must name; empty accepts any.
 	email string
+	// idp is the site's id of the issuer the person signs in at: whoami and the identity header name it (decision 0035).
+	idp string
 	// signIn plays the person from the navigation that left the site to sign in until the browser is back at the site.
 	signIn func(t *testing.T, b *tab)
 	// leftToSignIn says whether the last navigation went to the issuer's sign-in.
@@ -261,9 +263,9 @@ var scenarios = []scenario{
 	{name: "sign-in prefix: /_session/ reaches session without a check", where: anywhere, run: func(t *testing.T, x *target, b *tab) {
 		r := b.fetch(t, "GET", core.PathWhoami, nil)
 		var who struct {
-			Sub, Email string
+			Idp, Sub, Email string
 		}
-		if r.Status != http.StatusOK || json.Unmarshal([]byte(r.Body), &who) != nil || who.Sub == "" ||
+		if r.Status != http.StatusOK || json.Unmarshal([]byte(r.Body), &who) != nil || who.Sub == "" || who.Idp != x.idp ||
 			(x.email != "" && who.Email != x.email) {
 			t.Fatalf("whoami: %+v", r)
 		}
@@ -325,9 +327,10 @@ var scenarios = []scenario{
 			t.Fatal(err)
 		}
 		var claims struct {
-			Iss, Aud, Sub string
+			Iss, Aud, Idp, Sub string
 		}
-		if json.Unmarshal(payload, &claims) != nil || claims.Iss != x.origin || claims.Aud != "legacy-app" || claims.Sub != x.subject {
+		if json.Unmarshal(payload, &claims) != nil || claims.Iss != x.origin || claims.Aud != "legacy-app" || claims.Idp != x.idp ||
+			claims.Sub != x.subject {
 			t.Fatalf("identity claims: %s", payload)
 		}
 

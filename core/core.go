@@ -60,8 +60,8 @@ func New(o Options) (*Core, error) {
 	}
 	if needIssuer {
 		for _, iss := range o.Rules.Issuers {
-			if o.Issuers[iss] == nil {
-				return nil, fmt.Errorf("session core: a route of mode exchange needs the client of the issuer %s", iss)
+			if o.Issuers[iss.Identifier] == nil {
+				return nil, fmt.Errorf("session core: a route of mode exchange needs the client of the issuer %s", iss.ID)
 			}
 		}
 	}
