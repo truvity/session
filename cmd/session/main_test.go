@@ -34,3 +34,16 @@ func TestTheAuditScopeIsTheLabel(t *testing.T) {
 		}
 	}
 }
+
+// Decision 0014: the authorizer is a native handler of a Lambda function, and refuses to run anywhere else; it needs the site
+// and the store like `session serve`.
+func TestTheAuthorizerRunsOnLambdaOnly(t *testing.T) {
+	t.Setenv("AWS_LAMBDA_RUNTIME_API", "")
+	if err := authorizer([]string{"--config-dir", t.TempDir(), "--dynamodb-table", "sessions"}); err == nil ||
+		!strings.Contains(err.Error(), "AWS_LAMBDA_RUNTIME_API") {
+		t.Fatalf("outside Lambda: %v", err)
+	}
+	if err := authorizer([]string{"--dynamodb-table", "sessions"}); err == nil || !strings.Contains(err.Error(), "--config-dir is required") {
+		t.Fatalf("no config dir: %v", err)
+	}
+}

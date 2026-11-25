@@ -5,6 +5,13 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### Step 5, part one: the API Gateway authorizer
+
+- New: `session authorizer`, the API Gateway Lambda authorizer as a native Go handler of the check ([0014](docs/decisions/0014-authorizer-native-go-handler.md), [0030](docs/decisions/0030-lambda-handlers-step-5-choices.md)), for the HTTP API (payload 2.0, simple responses) and the REST API (REQUEST authorizer, and payload 1.0). It runs only as a Lambda function. No session is the error `Unauthorized` (401), every other refusal a deny (403), an unavailable check a function error (500); an allow carries the token, the identity header and the site's cookies in the context keys `authorization`, `identity` and `cookie`, for the integration's parameter mapping.
+- New: `internal/apigateway`, the adapter, beside `internal/envoy` and `internal/nginx`. `go.mod` gains `github.com/aws/aws-lambda-go` 1.55.1.
+- The sign-in function on Lambda is `session serve --check-grpc ''` behind the Lambda Web Adapter; no code of its own.
+- Not yet deployable with audit to a writer: on Lambda the transport is atoom B9's `transport/sqs`, not yet released; `--audit-stdout` serves the emulator and local runs only.
+
 ### Step 4: the image
 
 - **The image** `ghcr.io/truvity/session` ([0028](docs/decisions/0028-the-image.md)): `.github/workflows/image.yaml` publishes `master-<commit>` on a push to `master` (version `0.0.0-master.<commit>`) and `X.Y.Z` on a tag `vX.Y.Z`, for `linux/amd64` and `linux/arm64`, from `just build-image`. A pull request publishes nothing.

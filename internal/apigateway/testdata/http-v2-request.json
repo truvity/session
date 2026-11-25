@@ -1,0 +1,19 @@
+{
+  "version": "2.0",
+  "type": "REQUEST",
+  "routeArn": "arn:aws:execute-api:eu-west-1:123456789012:api123/$default/GET/app/x",
+  "identitySource": ["__Host-docs=SESSION"],
+  "routeKey": "$default",
+  "rawPath": "/app/x",
+  "rawQueryString": "a=1",
+  "cookies": ["__Host-docs=SESSION", "theme=dark"],
+  "headers": {"accept": "text/html", "host": "docs.example.test", "sec-fetch-mode": "navigate", "x-session-token": "forged"},
+  "queryStringParameters": {"a": "1"},
+  "requestContext": {
+    "accountId": "123456789012", "apiId": "api123", "domainName": "docs.example.test", "domainPrefix": "docs",
+    "http": {"method": "GET", "path": "/app/x", "protocol": "HTTP/1.1", "sourceIp": "192.0.2.1", "userAgent": "test"},
+    "requestId": "req-2", "routeKey": "$default", "stage": "$default", "time": "22/Nov/2026:10:00:00 +0000", "timeEpoch": 1795341600000
+  },
+  "pathParameters": {},
+  "stageVariables": {}
+}

@@ -1,7 +1,10 @@
 // Command session is the session service: the sign-in paths and the check, for Envoy over gRPC (--check-grpc) and HTTP
 // (--check-http) and for nginx's auth_request (--check-nginx), with the exchange client and the identity header for the route modes exchange and identity-header.
+// On AWS Lambda, the sign-in function is `session serve` behind the Lambda Web Adapter (decision 0012), and the API Gateway
+// authorizer is `session authorizer`, a native Go handler of the same check (decision 0014).
 //
 //	session serve --config-dir DIR --dynamodb-table NAME [--key-dir DIR] [--key PURPOSE=DRIVER[:KEY] ...] --audit-socket PATH|--audit-stdout [flags]
+//	session authorizer --config-dir DIR --dynamodb-table NAME [...]   the API Gateway Lambda authorizer (a Lambda function only)
 //	session check --site FILE      validate a site file
 //	session version
 package main
@@ -22,6 +25,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	awsdynamodb "github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -34,6 +38,7 @@ import (
 	"github.com/truvity/atoom/transport/gen/atoom/transport/v1alpha1/transportv1alpha1connect"
 
 	"github.com/truvity/session/core"
+	"github.com/truvity/session/internal/apigateway"
 	"github.com/truvity/session/internal/atoomx"
 	"github.com/truvity/session/internal/audit"
 	"github.com/truvity/session/internal/envoy"
@@ -57,6 +62,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = serve(os.Args[2:])
+	case "authorizer":
+		err = authorizer(os.Args[2:])
 	case "check":
 		err = check(os.Args[2:])
 	case "version", "--version":
@@ -71,7 +78,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: session serve|check|version (session <command> -h for its flags)")
+	fmt.Fprintln(os.Stderr, "usage: session serve|authorizer|check|version (session <command> -h for its flags)")
 	os.Exit(2)
 }
 
@@ -108,9 +115,8 @@ type listFlag []string
 func (l *listFlag) String() string     { return strings.Join(*l, ",") }
 func (l *listFlag) Set(v string) error { *l = append(*l, v); return nil }
 
-func serve(args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	var f serveFlags
+// commonFlags are the flags of every command that runs the check: the site, the drivers of the ports, audit and the timeouts.
+func commonFlags(fs *flag.FlagSet, f *serveFlags) {
 	fs.StringVar(&f.configDir, "config-dir", "", "the directory of the source port's file driver: site.jws (the site file, YAML) and the policy bundle")
 	fs.StringVar(&f.keyDir, "key-dir", "", "the state directory of the software key driver (mode 0700); required when a key purpose is on it")
 	fs.Var(&f.keys, "key", "the key driver of a key purpose (client-assertion, identity-header, wrapping): PURPOSE=software, PURPOSE=awskms "+
@@ -126,19 +132,32 @@ func serve(args []string) error {
 		"nothing in session decides by its value")
 	fs.StringVar(&f.table, "dynamodb-table", "", "the DynamoDB table of the store driver")
 	fs.StringVar(&f.endpoint, "dynamodb-endpoint", "", "a DynamoDB endpoint other than AWS's (DynamoDB Local)")
+	fs.DurationVar(&f.storeTimeout, "store-timeout", core.DefaultStoreTimeout, "the timeout of every store call; shorter than the proxy's timeout for the check")
+	fs.DurationVar(&f.exchangeTimeout, "exchange-timeout", core.DefaultExchangeTimeout,
+		"the bound of a check's token exchange (lock, refresh, issuer call); store timeout plus this is shorter than the proxy's timeout for the check")
+}
+
+func (f serveFlags) required() error {
+	for _, r := range []struct{ name, v string }{{"config-dir", f.configDir}, {"dynamodb-table", f.table}} {
+		if r.v == "" {
+			return fmt.Errorf("--%s is required", r.name)
+		}
+	}
+	return nil
+}
+
+func serve(args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	var f serveFlags
+	commonFlags(fs, &f)
 	fs.StringVar(&f.listen, "listen", ":8080", "the address of the sign-in paths")
 	fs.StringVar(&f.checkGRPC, "check-grpc", ":9001", "the address of Envoy's gRPC external authorisation; empty turns it off")
 	fs.StringVar(&f.checkHTTP, "check-http", "", "the address of Envoy's HTTP external authorisation (path prefix /check); empty turns it off")
 	fs.StringVar(&f.checkNginx, "check-nginx", "", "the address of nginx's auth_request check (paths /auth and /error-page); empty turns it off")
 	fs.StringVar(&f.admin, "admin", "127.0.0.1:9090", "the address of /metrics and /healthz")
-	fs.DurationVar(&f.storeTimeout, "store-timeout", core.DefaultStoreTimeout, "the timeout of every store call; shorter than the proxy's timeout for the check")
-	fs.DurationVar(&f.exchangeTimeout, "exchange-timeout", core.DefaultExchangeTimeout,
-		"the bound of a check's token exchange (lock, refresh, issuer call); store timeout plus this is shorter than the proxy's timeout for the check")
 	_ = fs.Parse(args)
-	for name, v := range map[string]string{"config-dir": f.configDir, "dynamodb-table": f.table} {
-		if v == "" {
-			return fmt.Errorf("--%s is required", name)
-		}
+	if err := f.required(); err != nil {
+		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -147,12 +166,44 @@ func serve(args []string) error {
 		return err
 	}
 	defer app.close()
+	if err := app.signIn(ctx); err != nil {
+		return err
+	}
 	return app.run(ctx, f)
+}
+
+// authorizer runs the API Gateway Lambda authorizer (decision 0014): a native Go handler of the check for both API Gateway
+// products, not behind the Lambda Web Adapter, which cannot answer authorizer events. It has no listener and no sign-in paths;
+// the sign-in function is `session serve` behind the adapter. It runs only as a Lambda function.
+func authorizer(args []string) error {
+	fs := flag.NewFlagSet("authorizer", flag.ExitOnError)
+	var f serveFlags
+	commonFlags(fs, &f)
+	_ = fs.Parse(args)
+	if err := f.required(); err != nil {
+		return err
+	}
+	if os.Getenv("AWS_LAMBDA_RUNTIME_API") == "" {
+		return errors.New("session authorizer runs as an AWS Lambda function: AWS_LAMBDA_RUNTIME_API is not set")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
+	defer stop()
+	app, err := build(ctx, f)
+	if err != nil {
+		return err
+	}
+	defer app.close()
+	app.startRunners(ctx)
+	lambda.StartWithOptions((&apigateway.Authorizer{Core: app.core}).Handle, lambda.WithContext(ctx))
+	return nil
 }
 
 type app struct {
 	core    *core.Core
 	signin  *signin.Handler
+	site    *site.File
+	signer  signin.Signer
+	ident   signin.Signer
 	closers []func()
 	// runners run beside the servers until the context ends: the policy loader's refresh.
 	runners []func(context.Context) error
@@ -172,9 +223,9 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 			a.close()
 		}
 	}()
-	src, err := atoomx.FileSource(f.configDir)
+	src, err := openSource(f)
 	if err != nil {
-		return nil, fmt.Errorf("config dir: %w", err)
+		return nil, err
 	}
 	a.closers = append(a.closers, src.Stop)
 	doc, err := src.Source.Read(ctx, connect.NewRequest(&sourcev1.ReadRequest{Name: "site"}))
@@ -279,15 +330,34 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.core = c
-	h, err := signin.New(ctx, signin.Options{Core: c, Issuer: sf.Issuer, ClientID: sf.Client.ID, Scopes: sf.Scopes, Signer: signer,
-		Identity: &identity})
-	if err != nil {
-		return nil, err
-	}
-	a.signin = h
+	a.core, a.site, a.signer, a.ident = c, sf, signer, identity
 	ok = true
 	return a, nil
+}
+
+// signIn makes the handler of the sign-in paths, which reads the issuer's discovery document.
+func (a *app) signIn(ctx context.Context) error {
+	h, err := signin.New(ctx, signin.Options{Core: a.core, Issuer: a.site.Issuer, ClientID: a.site.Client.ID, Scopes: a.site.Scopes,
+		Signer: a.signer, Identity: &a.ident})
+	if err != nil {
+		return err
+	}
+	a.signin = h
+	return nil
+}
+
+// openSource mounts the driver of the source port, which serves the site file and the policy bundle: atoom's Go source/file over
+// --config-dir, on every shape. On Lambda that directory is the configuration layer (decision 0012).
+//
+// The seam of atoom's B9 (decisions 0025 and 0030): B9 brings a Go source/ssm or source/appconfig driver. Which of them the
+// Lambda shape uses, and so which start-up switch selects it here beside --config-dir, is not decided yet; the core, the policy
+// loader and the authorizer read only the port's client, so the driver is mounted here and nothing else changes.
+func openSource(f serveFlags) (*atoomx.Source, error) {
+	src, err := atoomx.FileSource(f.configDir)
+	if err != nil {
+		return nil, fmt.Errorf("config dir: %w", err)
+	}
+	return src, nil
 }
 
 // auditScope is the scope of the audit log: the label --audit-scope, or local when it is unset. It is a name only (decision 0027).
@@ -301,6 +371,11 @@ func auditScope(label string) string {
 // auditTransport is the client of the transport port (decision 0024): the emit socket of a transport driver (--audit-socket), or,
 // with --audit-stdout for local development, the driver Lines in this process, which writes each record as one JSON line to w.
 // Exactly one of them must be given, whatever --audit-scope says. stop is nil for the socket.
+//
+// The seam of atoom's B9 (decisions 0025 and 0030): a Lambda function has no spool sidecar and so no socket. B9 brings a Go
+// transport/sqs driver, which is mounted here in this process, as Lines is, and selected by a third switch of its own beside
+// these two (exactly one of the three). Until it is released, the authorizer and the sign-in function run on Lambda only with
+// --audit-stdout, which is for local development and the emulator, not for a deployment.
 func auditTransport(socketPath string, stdout bool, w io.Writer) (transportv1alpha1connect.TransportServiceClient, func(), error) {
 	switch {
 	case socketPath != "" && stdout:
@@ -356,13 +431,7 @@ func (a *app) run(ctx context.Context, f serveFlags) error {
 			ReadHeaderTimeout: 10 * time.Second})
 	}
 	errs := make(chan error, len(servers)+1)
-	for _, r := range a.runners {
-		go func() {
-			if err := r(ctx); err != nil {
-				slog.Error("runner", "error", err.Error())
-			}
-		}()
-	}
+	a.startRunners(ctx)
 	if f.checkGRPC != "" {
 		ln, err := net.Listen("tcp", f.checkGRPC)
 		if err != nil {
@@ -393,6 +462,17 @@ func (a *app) run(ctx context.Context, f serveFlags) error {
 		_ = s.Shutdown(shut)
 	}
 	return nil
+}
+
+// startRunners starts the runners beside the servers or the Lambda handler: the policy loader's refresh.
+func (a *app) startRunners(ctx context.Context) {
+	for _, r := range a.runners {
+		go func() {
+			if err := r(ctx); err != nil {
+				slog.Error("runner", "error", err.Error())
+			}
+		}()
+	}
 }
 
 // quietRefusals drops the store driver's warning for a refused condition (code aborted): a lost race on an idle refresh or a
