@@ -19,6 +19,7 @@ import (
 
 	"github.com/truvity/session/internal/atoomx"
 	"github.com/truvity/session/internal/kmstest"
+	"github.com/truvity/session/internal/sealer/sealertest"
 	"github.com/truvity/session/internal/signin"
 )
 
@@ -88,6 +89,17 @@ func open(t *testing.T, fake *kmstest.KMS, values []string, stateDir string) (*a
 	return ks, err
 }
 
+// signers starts the seal and token blocks over the key set, as session serve does, and returns the two signers. The error is
+// the start's.
+func signers(t *testing.T, ks *atoomx.KeySet) (client, identity signin.Signer, err error) {
+	t.Helper()
+	b, err := sealertest.Tokens(t, ks, signin.TokenPurposes())
+	if err != nil {
+		return signin.Signer{}, signin.Signer{}, err
+	}
+	return signin.Signers(b.Tokens)
+}
+
 // verify checks a compact JWS against a JWK, as the issuer and the apps do.
 func verify(t *testing.T, jws string, jwk jose.JSONWebKey) {
 	t.Helper()
@@ -118,7 +130,7 @@ func TestBothPurposesOnAWSKMS(t *testing.T) {
 		t.Fatal("not on AWS KMS")
 	}
 	ctx := context.Background()
-	client, identity, err := signin.Signers(ctx, ks)
+	client, identity, err := signers(t, ks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +189,7 @@ func TestAPurposeOnEachDriver(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	client, identity, err := signin.Signers(ctx, ks)
+	client, identity, err := signers(t, ks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,13 +223,12 @@ func TestAPurposeOnEachDriver(t *testing.T) {
 // The start fails when a KMS key is missing, of another spec or disabled: the driver never makes or replaces a key. A purpose
 // on the software driver needs --key-dir; an install with every purpose on software never asks for a KMS client.
 func TestTheStartRefusesAKMSKeyItCannotUse(t *testing.T) {
-	ctx := context.Background()
 	start := func(fake *kmstest.KMS, values ...string) error {
 		ks, err := open(t, fake, values, keyDir(t))
 		if err != nil {
 			return err
 		}
-		_, _, err = signin.Signers(ctx, ks)
+		_, _, err = signers(t, ks)
 		return err
 	}
 	fake := kmstest.New()
@@ -256,7 +267,7 @@ func TestTheKMSSignatureIsRawRS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, identity, err := signin.Signers(context.Background(), ks)
+	_, identity, err := signers(t, ks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,5 +278,42 @@ func TestTheKMSSignatureIsRawRS(t *testing.T) {
 	raw, err := base64.RawURLEncoding.DecodeString(jws[strings.LastIndex(jws, ".")+1:])
 	if err != nil || len(raw) != 64 {
 		t.Fatalf("signature of %d octets: %v", len(raw), err)
+	}
+}
+
+// The token block's header is the one session made before it (decision 0022): exactly alg, kid and typ, in that order, with the
+// key port's key_id as kid; the payload is the claims with their names in order.
+func TestTheHeadersAreAlgKidTyp(t *testing.T) {
+	ks, err := open(t, nil, nil, keyDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	client, identity, err := signers(t, ks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		s   signin.Signer
+		typ string
+	}{{client, "JWT"}, {identity, "session-identity+jwt"}} {
+		jwk, err := c.s.JWK(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		jws, err := c.s.Sign(ctx, map[string]any{"sub": "alice", "aud": "x", "iat": 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts := strings.Split(jws, ".")
+		h, _ := base64.RawURLEncoding.DecodeString(parts[0])
+		p, _ := base64.RawURLEncoding.DecodeString(parts[1])
+		if want := `{"alg":"ES256","kid":"` + jwk.KeyID + `","typ":"` + c.typ + `"}`; string(h) != want {
+			t.Fatalf("header %s, want %s", h, want)
+		}
+		if string(p) != `{"aud":"x","iat":1,"sub":"alice"}` {
+			t.Fatalf("payload %s", p)
+		}
+		verify(t, jws, jwk)
 	}
 }

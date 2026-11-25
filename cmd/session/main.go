@@ -236,19 +236,25 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 		return nil, err
 	}
 	a.closers = append(a.closers, keys.Stop)
-	signer, identity, err := signin.Signers(ctx, keys)
-	if err != nil {
-		return nil, err
-	}
 	for _, p := range keyPurposes {
 		slog.Info("key", "purpose", p.Name, "driver", keys.Driver(p.Name))
 	}
-	// The seal block keeps its wraps in session's store, under seal/, and its wrapping key on the purpose's key driver.
-	sb, err := sealer.Open(ctx, sealer.Options{Keys: keys.For(sealer.WrappingPurpose), Items: st.Items, Installation: "session/" + sf.Site})
+	// One key client in front of the drivers (atoom's key/route): each purpose's calls go to the driver that holds it.
+	routed, err := keys.Route()
+	if err != nil {
+		return nil, err
+	}
+	// The seal block keeps its wraps in session's store, under seal/, and signs for the token block, which makes the client
+	// assertion and the identity header (decision 0022). Its start ensures every key.
+	sb, err := sealer.Open(ctx, sealer.Options{Keys: routed, Items: st.Items, Installation: "session/" + sf.Site, Tokens: signin.TokenPurposes()})
 	if err != nil {
 		return nil, err
 	}
 	a.closers = append(a.closers, sb.Stop)
+	signer, identity, err := signin.Signers(sb.Tokens)
+	if err != nil {
+		return nil, err
+	}
 	issuer, err := exchange.New(ctx, exchange.Options{Issuer: sf.Issuer, ClientID: sf.Client.ID, Asserter: signer})
 	if err != nil {
 		return nil, err

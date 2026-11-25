@@ -12,6 +12,7 @@ import (
 	"github.com/truvity/session/core"
 	"github.com/truvity/session/internal/atoomx"
 	"github.com/truvity/session/internal/kmstest"
+	"github.com/truvity/session/internal/sealer/sealertest"
 	"github.com/truvity/session/internal/signin"
 )
 
@@ -32,7 +33,11 @@ func TestTheIdentityHeaderOnAWSKMSSignsAboutTwiceAMinute(t *testing.T) {
 	}
 	t.Cleanup(ks.Stop)
 	ctx := context.Background()
-	_, identity, err := signin.Signers(ctx, ks)
+	b, err := sealertest.Tokens(t, ks, signin.TokenPurposes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, identity, err := signin.Signers(b.Tokens)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -121,7 +121,6 @@ func newStand(t *testing.T, opts ...func(*standConfig)) *stand {
 	mem := storetest.New(nil)
 	items, stopItems := mem.Client()
 	t.Cleanup(stopItems)
-	sealer := sealertest.New(t)
 	keyDir := t.TempDir()
 	if err := os.Chmod(keyDir, 0o700); err != nil { //nolint:gosec // G302: a directory needs its x bit // the key driver wants its state directory private
 		t.Fatal(err)
@@ -141,7 +140,12 @@ func newStand(t *testing.T, opts ...func(*standConfig)) *stand {
 		t.Fatal(err)
 	}
 	t.Cleanup(keys.Stop)
-	signer, identity, err := signin.Signers(ctx, keys)
+	blocks, err := sealertest.Tokens(t, keys, signin.TokenPurposes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealer := blocks.Sealer
+	signer, identity, err := signin.Signers(blocks.Tokens)
 	if err != nil {
 		t.Fatal(err)
 	}
