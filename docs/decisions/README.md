@@ -37,6 +37,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0030](0030-lambda-handlers-step-5-choices.md) | The Lambda handlers: the choices of step 5 before atoom's B9 |
 | [0031](0031-logout-across-hosts.md) | Logout across hosts: end-session, back-channel logout, the lookup, cookies and audit (partly supersedes 0010) |
 | [0032](0032-atoom-0.8.0-transports-and-the-appconfig-source.md) | atoom 0.8.0: the audit transports NATS and SQS, and the AppConfig source |
+| [0033](0033-sluis-v1-as-an-issuer.md) | sluis v1 as an issuer: the gaps, and what session and sluis v1 each change (proposed; partly supersedes 0005 and 0025) |
 | [0034](0034-several-issuers-per-site.md) | Several issuers per site: the sign-in page, a flow per issuer, and the session's own issuer for everything after |
 
 ## How the records are kept
