@@ -7,7 +7,7 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ### atoom 0.6.0: the token block
 
-- **atoom 0.6.0** for every atoom module, and one new one: `blocks/token` ([0022](docs/decisions/0022-atoom-token-block.md), proposed). `spike/` keeps the pins it ran with.
+- **atoom 0.6.0** for every atoom module, and one new one: `blocks/token` ([0022](docs/decisions/0022-atoom-token-block.md)). `spike/` keeps the pins it ran with.
 - **The client assertion and the identity header are signed by atoom's `token` block**, in place of session's own JWS code: in process, over the seal block session already runs, which signs through the key port. `key/route` gives the seal block one key client in front of the drivers, so each purpose stays on the driver `--key` chose.
 - **`/_session/jwks` is the block's key set** of the two purposes, with the same `Cache-Control: max-age=300`. The keys and their members are the same; only the order of the members inside each key differs.
 - Unchanged for issuers and apps: the header (`alg` ES256, `kid` the key port's `key_id`, `typ` `JWT` or `session-identity+jwt`, in that order), the claims, the lifetimes and the identity header's 30-second reuse.

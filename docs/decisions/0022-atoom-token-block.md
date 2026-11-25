@@ -1,6 +1,6 @@
 # 0022. atoom's token block: the choices of the move to atoom 0.6.0
 
-Status: proposed
+Status: accepted, 2026-11-25 (owner decision on the pull request of the move to the token block)
 Date: 2026-11-25
 
 Carries out, for signing, what [0006](0006-built-on-atoom.md) decided (no crypto code of session's own where atoom has the part), now that atoom 0.6.0 has the `token` block (atoom record 0020) and `key/route`. It keeps every rule of [0016](0016-exchange-client-and-identity-header.md) and [0019](0019-signing-keys-on-aws-kms.md).
