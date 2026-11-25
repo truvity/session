@@ -5,6 +5,13 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### atoom 0.7.0: the key drivers are told no installation
+
+- **atoom 0.7.0** for every atoom module ([0027](docs/decisions/0027-atoom-0.7.0-and-the-audit-scope-flag.md)). `spike/` keeps the pins it ran with. `truvity/audit/emitter` stays at 0.19.0 and runs on it.
+- **Breaking, start-up:** `--environment` is renamed `--audit-scope`. It is the scope of the security-audit log only (`local` when unset); nothing in session decides by its value. `--environment` is no longer a flag, so a deployment that passes it fails to start: rename it to `--audit-scope` with the same value, and the records keep the same scope.
+- session tells no key driver an installation: atoom 0.7.0's `key/software` has no environments, and `atoomx.KeyOptions.Environment` and the environment argument of `atoomx.SoftwareKeys` are gone. Any label now works with a purpose on the software driver. A deployment that must not hold keys in files puts its purposes on AWS KMS with `--key PURPOSE=awskms[:KEY]`.
+- atoom's clients send the correlation header `Atoom-Correlation-Id`; session reads no correlation header itself.
+
 ### The audit transport is an explicit switch
 
 - **Breaking, start-up:** `session serve` takes exactly one of `--audit-socket PATH` and the new `--audit-stdout` ([0024](docs/decisions/0024-audit-transport-is-an-explicit-switch.md)). With neither it refuses to start, and with both too, whatever `--environment` says. `--audit-stdout` writes each security-audit record as one JSON line to stdout, for local development; a local run that relied on an unset `--environment` now adds `--audit-stdout`.

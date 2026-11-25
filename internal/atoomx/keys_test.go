@@ -76,7 +76,7 @@ func open(t *testing.T, fake *kmstest.KMS, values []string, stateDir string) (*a
 	if err != nil {
 		t.Fatal(err)
 	}
-	ks, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: signin.Purposes(), Choices: choices, StateDir: stateDir, Environment: "development",
+	ks, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: signin.Purposes(), Choices: choices, StateDir: stateDir,
 		AliasPrefix: "session/docs", KMS: func() (awskms.API, error) {
 			if fake == nil {
 				t.Fatal("the KMS client was asked for, with no purpose on AWS KMS")

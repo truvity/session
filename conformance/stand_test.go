@@ -170,7 +170,7 @@ func newStand(t *testing.T, kc *kctest.Keycloak) *stand {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: signin.Purposes(), Choices: choices, StateDir: keyDir, Environment: "development",
+	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: signin.Purposes(), Choices: choices, StateDir: keyDir,
 		KMS: func() (awskms.API, error) { return nil, fmt.Errorf("the conformance suite runs without AWS") }})
 	if err != nil {
 		t.Fatal(err)

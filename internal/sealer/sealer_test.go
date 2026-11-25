@@ -75,7 +75,7 @@ func TestTheWrapsLiveInSessionsStore(t *testing.T) {
 	items, stop := mem.Client()
 	t.Cleanup(stop)
 	open := func() *sealer.Block {
-		keys, err := atoomx.SoftwareKeys(dir, sealer.KeyPurposes(), "development")
+		keys, err := atoomx.SoftwareKeys(dir, sealer.KeyPurposes())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +111,7 @@ func TestAKeyDriverWithoutTheWrappingPurposeIsRefused(t *testing.T) {
 	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: the key driver wants its state directory private
 		t.Fatal(err)
 	}
-	keys, err := atoomx.SoftwareKeys(dir, nil, "development")
+	keys, err := atoomx.SoftwareKeys(dir, nil)
 	if err == nil {
 		t.Cleanup(keys.Stop)
 		items, stop := storetest.New(nil).Client()

@@ -91,7 +91,7 @@ func check(args []string) error {
 }
 
 type serveFlags struct {
-	configDir, keyDir, environment   string
+	configDir, keyDir, auditScope    string
 	table, endpoint                  string
 	listen, admin                    string
 	checkGRPC, checkHTTP, checkNginx string
@@ -122,8 +122,7 @@ func serve(args []string) error {
 		"to the audit writer; session refuses to start without it unless --audit-stdout is given, and refuses both")
 	fs.BoolVar(&f.auditStdout, "audit-stdout", false, "write each security-audit record as one JSON line to stdout, for local development: "+
 		"no writer receives them; refused with --audit-socket")
-	fs.StringVar(&f.environment, "environment", "", "a label of the installation: the scope of the security-audit log (unset is local), "+
-		"and the environment the software key driver is told (atoom 0.6.0 takes unset, development, staging or production); "+
+	fs.StringVar(&f.auditScope, "audit-scope", "", "the scope of the security-audit log, a label of the installation (unset is local); "+
 		"nothing in session decides by its value")
 	fs.StringVar(&f.table, "dynamodb-table", "", "the DynamoDB table of the store driver")
 	fs.StringVar(&f.endpoint, "dynamodb-endpoint", "", "a DynamoDB endpoint other than AWS's (DynamoDB Local)")
@@ -236,7 +235,7 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	if prefix == "" {
 		prefix = "session/" + sf.Site
 	}
-	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: keyPurposes, Choices: choices, StateDir: f.keyDir, Environment: f.environment,
+	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: keyPurposes, Choices: choices, StateDir: f.keyDir,
 		AliasPrefix: prefix, KMS: func() (awskms.API, error) {
 			return awskmsapi.NewFromConfig(cfg, func(o *awskmsapi.Options) {
 				if f.kmsEndpoint != "" {
@@ -291,17 +290,17 @@ func build(ctx context.Context, f serveFlags) (*app, error) {
 	return a, nil
 }
 
-// auditScope is the scope of the audit log: the label --environment, or local when it is unset. It is a name only.
-func auditScope(environment string) string {
-	if environment == "" {
+// auditScope is the scope of the audit log: the label --audit-scope, or local when it is unset. It is a name only (decision 0027).
+func auditScope(label string) string {
+	if label == "" {
 		return "local"
 	}
-	return environment
+	return label
 }
 
 // auditTransport is the client of the transport port (decision 0024): the emit socket of a transport driver (--audit-socket), or,
 // with --audit-stdout for local development, the driver Lines in this process, which writes each record as one JSON line to w.
-// Exactly one of them must be given, whatever --environment says. stop is nil for the socket.
+// Exactly one of them must be given, whatever --audit-scope says. stop is nil for the socket.
 func auditTransport(socketPath string, stdout bool, w io.Writer) (transportv1alpha1connect.TransportServiceClient, func(), error) {
 	switch {
 	case socketPath != "" && stdout:
@@ -333,7 +332,7 @@ func openAudit(a *app, f serveFlags, sf *site.File, seal *sealer.Sealer) (*audit
 	if sf.Policy != nil {
 		bundle = sf.Policy.Bundle
 	}
-	return audit.New(audit.Options{Transport: tr, Pseudonyms: seal, Release: version, Scope: auditScope(f.environment), Policy: bundle})
+	return audit.New(audit.Options{Transport: tr, Pseudonyms: seal, Release: version, Scope: auditScope(f.auditScope), Policy: bundle})
 }
 
 func (a *app) run(ctx context.Context, f serveFlags) error {

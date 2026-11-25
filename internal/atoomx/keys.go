@@ -83,8 +83,8 @@ type KeyOptions struct {
 	// Purposes are the purposes session declares; Choices says which driver holds each (ParseKeyChoices).
 	Purposes []purpose.Declaration
 	Choices  map[string]KeyChoice
-	// StateDir and Environment are the software driver's, when a purpose is on it.
-	StateDir, Environment string
+	// StateDir is the software driver's, when a purpose is on it.
+	StateDir string
 	// KMS returns the KMS client, when a purpose is on AWS KMS. It is called once, and only then, so an install without AWS needs
 	// no AWS configuration.
 	KMS func() (awskms.API, error)
@@ -149,7 +149,7 @@ func OpenKeys(o KeyOptions) (*KeySet, error) {
 		if o.StateDir == "" {
 			return nil, fmt.Errorf("--key-dir is required: the purposes %s are on the software key driver", strings.Join(names(ds), ", "))
 		}
-		k, err := SoftwareKeys(o.StateDir, ds, o.Environment)
+		k, err := SoftwareKeys(o.StateDir, ds)
 		if err != nil {
 			return nil, err
 		}

@@ -134,7 +134,7 @@ func newStand(t *testing.T, opts ...func(*standConfig)) *stand {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: signin.Purposes(), Choices: choices, StateDir: keyDir, Environment: "development",
+	keys, err := atoomx.OpenKeys(atoomx.KeyOptions{Purposes: signin.Purposes(), Choices: choices, StateDir: keyDir,
 		AliasPrefix: "session/docs", KMS: func() (awskms.API, error) { return cfg.kms, nil }})
 	if err != nil {
 		t.Fatal(err)

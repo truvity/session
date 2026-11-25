@@ -31,6 +31,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0024](0024-audit-transport-is-an-explicit-switch.md) | The audit transport is an explicit switch, not a value of `--environment` (partly supersedes 0023) |
 | [0025](0025-first-version-for-the-first-sites.md) | The first version for the first sites: step 4, and what step 5 waits for |
 | [0026](0026-exchange-targets-what-the-issuer-allows.md) | The route mode `exchange` targets what the site's issuer allows: with sluis v2, resource clients only |
+| [0027](0027-atoom-0.7.0-and-the-audit-scope-flag.md) | atoom 0.7.0 and `--audit-scope`: the key drivers are told no installation (partly supersedes 0024) |
 
 ## How the records are kept
 

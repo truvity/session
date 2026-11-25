@@ -1,6 +1,6 @@
 # 0024. The audit transport is an explicit switch, not a value of `--environment`
 
-Status: accepted, 2026-11-25 (owner decision on the pull request); partly supersedes [0023](0023-audit-emitter.md)
+Status: accepted, 2026-11-25 (owner decision on the pull request); partly supersedes [0023](0023-audit-emitter.md); partly superseded by [0027](0027-atoom-0.7.0-and-the-audit-scope-flag.md) (the row `--environment`: the flag is `--audit-scope`, and no key driver is told it)
 Date: 2026-11-25
 
 ## Context

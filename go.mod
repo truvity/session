@@ -17,19 +17,19 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	github.com/go-jose/go-jose/v4 v4.1.9
-	github.com/truvity/atoom/blocks/seal v0.6.0
-	github.com/truvity/atoom/blocks/token v0.6.0
-	github.com/truvity/atoom/common v0.6.0
-	github.com/truvity/atoom/key v0.6.0
-	github.com/truvity/atoom/key/awskms v0.6.0
-	github.com/truvity/atoom/key/software v0.6.0
-	github.com/truvity/atoom/policy v0.6.0
-	github.com/truvity/atoom/socket v0.6.0
-	github.com/truvity/atoom/source v0.6.0
-	github.com/truvity/atoom/source/file v0.6.0
-	github.com/truvity/atoom/store v0.6.0
-	github.com/truvity/atoom/store/dynamodb v0.6.0
-	github.com/truvity/atoom/transport v0.6.0
+	github.com/truvity/atoom/blocks/seal v0.7.0
+	github.com/truvity/atoom/blocks/token v0.7.0
+	github.com/truvity/atoom/common v0.7.0
+	github.com/truvity/atoom/key v0.7.0
+	github.com/truvity/atoom/key/awskms v0.7.0
+	github.com/truvity/atoom/key/software v0.7.0
+	github.com/truvity/atoom/policy v0.7.0
+	github.com/truvity/atoom/socket v0.7.0
+	github.com/truvity/atoom/source v0.7.0
+	github.com/truvity/atoom/source/file v0.7.0
+	github.com/truvity/atoom/store v0.7.0
+	github.com/truvity/atoom/store/dynamodb v0.7.0
+	github.com/truvity/atoom/transport v0.7.0
 	github.com/truvity/audit/emitter v0.19.0
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/oauth2 v0.38.0
