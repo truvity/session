@@ -1,0 +1,15 @@
+{
+  "version": "2.0",
+  "type": "REQUEST",
+  "routeArn": "arn:aws:execute-api:eu-west-1:123456789012:api123/$default/GET/app/x",
+  "routeKey": "$default",
+  "rawPath": "/app/x",
+  "rawQueryString": "",
+  "cookies": ["__Host-docs=SESSION"],
+  "headers": {"accept": "application/json", "host": "docs.example.test"},
+  "requestContext": {
+    "accountId": "123456789012", "apiId": "api123", "domainName": "docs.example.test",
+    "http": {"method": "GET", "path": "/app/x", "protocol": "HTTP/1.1", "sourceIp": "192.0.2.1"},
+    "requestId": "req-3", "routeKey": "$default", "stage": "$default"
+  }
+}

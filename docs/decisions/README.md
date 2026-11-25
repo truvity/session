@@ -33,6 +33,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0026](0026-exchange-targets-what-the-issuer-allows.md) | The route mode `exchange` targets what the site's issuer allows: with sluis v2, resource clients only |
 | [0027](0027-atoom-0.7.0-and-the-audit-scope-flag.md) | atoom 0.7.0 and `--audit-scope`: the key drivers are told no installation (partly supersedes 0024) |
 | [0028](0028-the-image.md) | The image of session, and what else a deployed first site needs from this repository |
+| [0030](0030-lambda-handlers-step-5-choices.md) | The Lambda handlers: the choices of step 5 before atoom's B9 (proposed) |
 
 ## How the records are kept
 

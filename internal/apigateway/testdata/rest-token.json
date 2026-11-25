@@ -1,0 +1,1 @@
+{"type": "TOKEN", "authorizationToken": "Bearer x", "methodArn": "arn:aws:execute-api:eu-west-1:123456789012:api123/prod/GET/app/x"}
