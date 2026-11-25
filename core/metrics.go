@@ -17,6 +17,8 @@ type Metrics struct {
 	touchFailed  atomic.Int64
 	// cacheWriteFailed counts tokens that were exchanged but could not be cached: the check used them, the next one exchanges again.
 	cacheWriteFailed atomic.Int64
+	// revocationFailed counts refresh tokens a logout could not revoke at the issuer (decision 0031): the logout went on.
+	revocationFailed atomic.Int64
 }
 
 // NewMetrics returns zeroed counters.
@@ -42,6 +44,12 @@ func (m *Metrics) Checks(label string) int64 {
 	}
 	return 0
 }
+
+// CountRevocationFailed counts a refresh token that a logout could not revoke at the issuer.
+func (m *Metrics) CountRevocationFailed() { m.revocationFailed.Add(1) }
+
+// RevocationsFailed is the number of refresh tokens that logouts could not revoke.
+func (m *Metrics) RevocationsFailed() int64 { return m.revocationFailed.Load() }
 
 // AuditDropped is the number of security-audit events the Auditor refused.
 func (m *Metrics) AuditDropped() int64 { return m.auditDropped.Load() }
@@ -76,7 +84,8 @@ func (m *Metrics) WritePrometheus(w io.Writer, site string) error {
 	}
 	_, err := fmt.Fprintf(w, "# TYPE session_audit_dropped_total counter\nsession_audit_dropped_total{site=%q} %d\n"+
 		"# TYPE session_idle_refresh_failed_total counter\nsession_idle_refresh_failed_total{site=%q} %d\n"+
-		"# TYPE session_exchange_cache_write_failed_total counter\nsession_exchange_cache_write_failed_total{site=%q} %d\n",
-		site, m.auditDropped.Load(), site, m.touchFailed.Load(), site, m.cacheWriteFailed.Load())
+		"# TYPE session_exchange_cache_write_failed_total counter\nsession_exchange_cache_write_failed_total{site=%q} %d\n"+
+		"# TYPE session_logout_revocation_failed_total counter\nsession_logout_revocation_failed_total{site=%q} %d\n",
+		site, m.auditDropped.Load(), site, m.touchFailed.Load(), site, m.cacheWriteFailed.Load(), site, m.revocationFailed.Load())
 	return err
 }

@@ -1,9 +1,9 @@
 # 0031. Logout across hosts: the issuer's end-session, back-channel logout, tombstones, cookies and audit
 
-Status: proposed, 2026-11-25; needs the owner's choices L1 to L3
+Status: accepted, 2026-11-25 (owner decision on the pull request: L1 B, L2 B, L3 B and the rest as recommended); partly supersedes [0010](0010-logout-pointer-items.md) (the pointer items: a session is found by its index entries)
 Date: 2026-11-25
 
-Collects logout in one place for every host (Envoy, nginx, API Gateway on Lambda) and proposes what to change. It keeps S6 of [0004](0004-browser-session-contract.md), the tombstone read at creation of [0010](0010-logout-pointer-items.md) and the logout answer of [0015](0015-envoy-http-mode-csrf-header-and-step-2-choices.md). It is the "new record then" that 0015 named for the logout lookup. The number 0017 is reserved (the decisions README); 0028 to 0030 are other records, so this record is 0031.
+Collects logout in one place for every host (Envoy, nginx, API Gateway on Lambda) and decides what changes. It keeps S6 of [0004](0004-browser-session-contract.md), the tombstone read at creation of [0010](0010-logout-pointer-items.md) and the logout answer of [0015](0015-envoy-http-mode-csrf-header-and-step-2-choices.md). It is the "new record then" that 0015 named for the logout lookup. The number 0017 is reserved (the decisions README); 0028 to 0030 are other records, so this record is 0031.
 
 ## Context
 
@@ -33,18 +33,18 @@ What is not settled:
 - **A logout without a live session** does not reach the issuer, so the person's session at the issuer stays and the next sign-in passes without a form.
 - **The refresh token** stays valid at the issuer after the person's logout until the issuer's end-session ends the issuer session. If the browser never reaches end-session (the helper's navigation fails, the tab is closed), the token lives on at the issuer, though session no longer holds it.
 
-## Decision (proposed)
+## Decision
 
-### L1. The lookup of a back-channel logout: owner choice
+### L1. The lookup of a back-channel logout
 
 | Option | Pros | Cons |
 | --- | --- | --- |
 | **A. Pointer items (today, 0010)** | Built and tested; a logout is one linearizable `Get` | A read-modify-write on every sign-in, retried on a lost race (64 tries for 16 parallel sign-ins of one subject); the set grows inside one item (400 KB on DynamoDB); a stale member costs a failed delete |
 | **B. atoom's index entries** (spike 2.3.1) | The store's own feature: the session `Put` carries two entries, `sid` and `sub`, whose values are the keyed hashes of issuer and value (never the plain `sid` or subject); a logout is a linearizable `Query` by entry and one `Transact` of deletes; no pointer to keep; no size bound; no retries at sign-in | Every `Put` of the session (the idle refresh, the rotated refresh token) must resend both entries, or they are deleted; a logout is a `Query` and a `BatchGetItem` instead of one `GetItem` (logout is rare); the linearizable `Query` seeing a session committed a moment before is documented by atoom's driver but must be observed on the real service (DynamoDB Local cannot show it); the store double must keep entries (it does) |
 
-**Pick B**, before the first site has sessions that matter: nothing sealed or stored needs to be read again, and sessions end within the maximum lifetime (8 hours by default). The tombstone and its one read at creation stay as they are. A test asserts that an idle refresh and a refresh-token rotation keep both entries.
+**B, the owner's choice.** Every put of the session item (the creation, the idle refresh and the write of refreshed tokens) carries both entries, because a put that leaves one out deletes it; tests assert that the idle refresh and a refresh-token rotation keep them. The tombstone and its one read at creation stay as they are. The linearizable `Query` by entry seeing a session committed a moment before is documented by atoom's `store/dynamodb` but must be confirmed on the real DynamoDB service (design section 17); DynamoDB Local cannot show it. No migration: nothing is deployed, so no session or pointer item exists to carry over; a store that held pointer items would only keep them until they expire, unread.
 
-### L2. A logout without a live session: owner choice
+### L2. A logout without a live session
 
 | Option | Pros | Cons |
 | --- | --- | --- |
@@ -52,9 +52,9 @@ What is not settled:
 | **B. Always to the issuer's end-session**, with `client_id` and `post_logout_redirect_uri`, and `id_token_hint` when the session is live | "Sign out" always ends the issuer's session when the person confirms | Without `id_token_hint`, Keycloak asks the person to confirm (a finding of the reference stand, [0013](0013-reference-stand.md)) |
 | C. To end-session only when a cookie was sent | Fewer confirmation pages | A person whose session ended at session (idle, back-channel of another site) still keeps the issuer's |
 
-**Pick B.** The JSON and `303` answers of 0015 stay; only the target changes when there is no live session. An issuer without `end_session_endpoint` still gets the site's `/`.
+**B, the owner's choice.** The JSON and `303` answers of 0015 stay; only the target changes when there is no live session. An issuer without `end_session_endpoint` still gets the site's `/`.
 
-### L3. The refresh token at the person's logout: owner choice
+### L3. The refresh token at the person's logout
 
 | Option | Pros | Cons |
 | --- | --- | --- |
@@ -62,7 +62,7 @@ What is not settled:
 | **B. Revoke it, best effort** (RFC 7009 at the issuer's `revocation_endpoint`, with the client's `private_key_jwt` assertion), after the session is deleted and before the answer, bounded by the exchange timeout | The token is dead whatever the browser does next; an issuer may also end the client's session with it | One issuer call at each logout; an issuer that does not answer delays the logout by the bound |
 | C. Revoke, and fail the logout when the issuer refuses | The strongest | A logout that fails while the issuer is down keeps nothing alive at session (the session is already deleted) but tells the person it failed |
 
-**Pick B.** Only when the discovery document names a `revocation_endpoint`; a failed revocation is counted (`session_logout_revocation_failed_total`) and logged, and the logout goes on. sluis v2's revocation endpoint is not known yet; without one, B is A.
+**B, the owner's choice.** Only when the discovery document names a `revocation_endpoint`, with `token_type_hint` `refresh_token`; a failed revocation is counted (`session_logout_revocation_failed_total`) and logged, and the logout goes on. sluis v2's revocation endpoint is not known yet; without one, B is A.
 
 ### L4. Cookies at logout
 
@@ -94,8 +94,9 @@ Nothing new per host. On API Gateway the authorizer cache stays 0 (0011), so a l
 ## Consequences
 
 - L1 B changes `core/store.go`: `Create` puts the session with two index entries and no pointer items, `touch` and the refresh resend them, `LogoutBy` queries by entry; the pointer code goes. The store tests and `just test-dynamodb` cover it; the real service's linearizable `Query` joins the real-AWS check (design section 17).
-- L2 B and L3 B change `internal/signin`'s `Logout` and need the issuer's `revocation_endpoint` from discovery. The conformance suite's logout scenario then also asserts the end-session without a live session and, on Keycloak, that the refresh token is refused after a logout.
+- L2 B and L3 B change `internal/signin`'s `Logout` and read the issuer's `revocation_endpoint` from discovery. The unit tests run the logout against an issuer double (the revocation with the client's assertion, a refused revocation counted, no endpoint, no live session); `just test-keycloak` asserts that Keycloak refuses the refresh token after a logout and that a logout without a live session goes to its end-session. The conformance suite's logout scenario, with a live session, is unchanged.
 - L4 adds one `Set-Cookie` to the logout answer.
+- A new counter, `session_logout_revocation_failed_total`.
 - Nothing changes for a site's configuration, the site file or the start-up flags.
 
 ## Roads not taken
@@ -110,5 +111,5 @@ Nothing new per host. On API Gateway the authorizer cache stays 0 (0011), so a l
 
 ## Open
 
-- The owner's choices L1, L2 and L3.
+- The real DynamoDB service's linearizable `Query` by entry (L1), with the real-AWS check.
 - sluis v2's end-session, back-channel logout and revocation endpoints: what session needs is in this record; when sluis serves them is sluis's to say (step 6).

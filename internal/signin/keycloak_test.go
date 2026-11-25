@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -40,6 +41,7 @@ type stand struct {
 	issuer   string
 	core     *core.Core
 	handler  *signin.Handler
+	exchange *exchange.Client
 	site     *httptest.Server
 	back     *httptest.Server
 	person   kctest.Person
@@ -176,7 +178,7 @@ func newStand(t *testing.T, opts ...func(*standConfig)) *stand {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.core = c
+	st.core, st.exchange = c, issuer
 	st.handler, err = signin.New(ctx, signin.Options{Core: c, Issuer: st.issuer, ClientID: "session-docs",
 		Scopes: []string{"openid", "profile", "email"}, Signer: signer, Identity: &identity})
 	if err != nil {
@@ -384,13 +386,18 @@ func csrfPost(t *testing.T, b *http.Client, u, origin string) *http.Response {
 	return res
 }
 
-// S6: logout is a POST with CSRF; it ends the session and sends the browser to Keycloak's end-session with id_token_hint, which
-// Keycloak takes without asking the person and sends back to the site.
+// S6: logout is a POST with CSRF; it ends the session, revokes its refresh token at Keycloak (decision 0031, L3) and sends the
+// browser to Keycloak's end-session with id_token_hint, which Keycloak takes without asking the person and sends back to the
+// site.
 func TestLogout(t *testing.T) {
 	st := newStand(t)
 	b := st.browser(t)
 	st.signIn(t, b, "/")
 	id := st.sessionCookie(b)
+	live, err := st.core.Load(context.Background(), id)
+	if err != nil || live.RefreshToken == "" {
+		t.Fatalf("no refresh token to revoke: %v", err)
+	}
 	// Without the CSRF headers: refused, the session stays.
 	res, err := b.Post(st.site.URL+core.PathLogout, "application/x-www-form-urlencoded", nil)
 	if err != nil {
@@ -417,6 +424,25 @@ func TestLogout(t *testing.T) {
 	}
 	if st.sessionCookie(b) != "" {
 		t.Fatal("the cookie was not cleared")
+	}
+	// L3: the refresh token was revoked before the browser reached end-session; Keycloak refuses it.
+	var refused *core.RefusedError
+	if _, err := st.exchange.Refresh(context.Background(), live.RefreshToken); !errors.As(err, &refused) {
+		t.Fatalf("the refresh token works after the logout: %v", err)
+	}
+	if n := st.core.Metrics().RevocationsFailed(); n != 0 {
+		t.Fatalf("%d revocations failed", n)
+	}
+	// L2: a logout without a live session still goes to Keycloak's end-session, without id_token_hint.
+	res = csrfPost(t, b, st.site.URL+core.PathLogout, st.site.URL)
+	var again struct {
+		LogoutURL string `json:"logout_url"`
+	}
+	_ = json.NewDecoder(res.Body).Decode(&again)
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.HasPrefix(again.LogoutURL, st.issuer+"/protocol/openid-connect/logout?") ||
+		strings.Contains(again.LogoutURL, "id_token_hint=") || !strings.Contains(again.LogoutURL, "client_id=session-docs") {
+		t.Fatalf("logout without a session %d %q", res.StatusCode, again.LogoutURL)
 	}
 	res = get(t, b, out.LogoutURL)
 	if res.Request.URL.String() != st.site.URL+"/" {

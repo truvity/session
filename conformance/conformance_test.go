@@ -373,7 +373,7 @@ var scenarios = []scenario{
 		}
 	}},
 
-	{name: "logout: a POST with CSRF ends the session and sends the browser to Keycloak's end-session (S6)", where: anywhere, run: func(t *testing.T, x *target, b *tab) {
+	{name: "logout: a POST with CSRF ends the session and sends the browser to Keycloak's end-session (S6), with or without a live session", where: anywhere, run: func(t *testing.T, x *target, b *tab) {
 		r := b.fetch(t, "POST", core.PathLogout, map[string]string{"Accept": "application/json"})
 		if r.Status != http.StatusForbidden || b.cookie(t, x.cookieName) == nil {
 			t.Fatalf("logout without the CSRF header: %+v", r)
@@ -394,6 +394,15 @@ var scenarios = []scenario{
 		}
 		if r := b.fetch(t, "GET", "/app/x", nil); r.Status != http.StatusUnauthorized {
 			t.Fatalf("after the logout: %+v", r)
+		}
+		// A logout without a live session still goes to the issuer's end-session, without id_token_hint (decision 0031, L2).
+		r = b.fetch(t, "POST", core.PathLogout, csrf)
+		var again struct {
+			LogoutURL string `json:"logout_url"`
+		}
+		if r.Status != http.StatusOK || json.Unmarshal([]byte(r.Body), &again) != nil ||
+			!strings.HasPrefix(again.LogoutURL, x.issuer+"/protocol/openid-connect/logout?") || strings.Contains(again.LogoutURL, "id_token_hint=") {
+			t.Fatalf("logout without a live session: %+v", r)
 		}
 		// Keycloak ends its own session without asking (id_token_hint) and sends the browser back to the site, which sends it to
 		// sign in: Keycloak's sign-in shows, because Keycloak's session is gone too.

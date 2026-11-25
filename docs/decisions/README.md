@@ -15,7 +15,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0007](0007-policy.md) | Policy: Cedar as a library, with a shared bundle |
 | [0008](0008-audit.md) | Audit: the security class only, never usage |
 | [0009](0009-session-core-block.md) | The session core is a block, built inside session first |
-| [0010](0010-logout-pointer-items.md) | Logout without a secondary index: pointer items and one tombstone read |
+| [0010](0010-logout-pointer-items.md) | Logout without a secondary index: pointer items and one tombstone read (pointer items superseded by 0031) |
 | [0011](0011-host-adapter-rules.md) | Host adapter rules: Envoy, nginx, API Gateway, the store timeout |
 | [0012](0012-lambda.md) | Lambda: every function behind the Web Adapter |
 | [0013](0013-reference-stand.md) | Reuse of the group SSO reference stand |
@@ -35,7 +35,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0028](0028-the-image.md) | The image of session, and what else a deployed first site needs from this repository |
 | [0029](0029-the-remote-runner.md) | The remote runner: the conformance scenarios against a deployed site, and the echo test backend |
 | [0030](0030-lambda-handlers-step-5-choices.md) | The Lambda handlers: the choices of step 5 before atoom's B9 |
-| [0031](0031-logout-across-hosts.md) | Logout across hosts: end-session, back-channel logout, the lookup, cookies and audit (proposed; owner choices L1 to L3) |
+| [0031](0031-logout-across-hosts.md) | Logout across hosts: end-session, back-channel logout, the lookup, cookies and audit (partly supersedes 0010) |
 
 ## How the records are kept
 
