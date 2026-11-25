@@ -273,13 +273,14 @@ Design consequences ([0010](decisions/0010-logout-pointer-items.md)):
 | Need | From atoom | First implementation |
 | --- | --- | --- |
 | Sessions, pointers, tombstones, locks, the token cache | `store` port | `store/dynamodb`. Any driver that passes the store kit: PostgreSQL and Valkey when atoom builds them |
-| Signing, the JWKS, wrapping the data keys | `key` port | `key/awskms`, `key/software` (a key file) |
-| Sealing of records, keyed hashes of store keys | `seal` block (`blocks/seal`) | Over the key port's wrapping key and session's own store |
+| The keys: signing, wrapping the data keys | `key` port, with `key/route` in front of the drivers | `key/awskms`, `key/software` (a key file) |
+| Sealing of records, keyed hashes of store keys, signatures by purpose | `seal` block (`blocks/seal`) | Over the key port's keys and session's own store |
+| The client assertion, the identity header, the JWKS | `token` block (`blocks/token`) | Over the seal block |
 | Site file and policy bundle | `source` port | `source/file` in Go |
 | Who may reach a route | `cedar-go` in-process, through atoom's loader `policy`, with its signed bundle, loading rules and decision test set | The signed policy bundle |
 | Security-audit events | The emitter of `truvity/audit` over atoom's `transport` port | To the audit writer of the environment |
 
-Every port, and the `seal` block, is called through its generated ConnectRPC client, with the driver mounted on an in-memory transport. atoom is pinned at 0.5.0, one version for every atoom module. Cedar is the one exception: a library by design ([0007](decisions/0007-policy.md)). The deadline and the correlation id travel with every call.
+Every port, and the `seal` and `token` blocks, is called through its generated ConnectRPC client, with the driver mounted on an in-memory transport. atoom is pinned at 0.6.0, one version for every atoom module. Cedar is the one exception: a library by design ([0007](decisions/0007-policy.md)). The deadline and the correlation id travel with every call.
 
 ### Session store
 
@@ -302,11 +303,13 @@ Rules:
 
 ### Keys and sealing
 
-The key port covers the `private_key_jwt` assertions, the signed identity header and the wrapping key of the `seal` block. The key file is the simple start and works with Keycloak. AWS KMS keeps the key from ever leaving it. The JWKS of the service is published at `/_session/jwks`.
+The key port holds the keys of the `private_key_jwt` assertions, of the signed identity header and the wrapping key of the `seal` block. The key file is the simple start and works with Keycloak. AWS KMS keeps the key from ever leaving it. The JWKS of the service is published at `/_session/jwks`.
+
+atoom's `token` block makes both JWS ([0022](decisions/0022-atoom-token-block.md)). It runs in session's process over the seal block session already runs, and the seal block signs through the key port: one key client, `key/route`, sends each purpose's calls to the driver that holds it. session gives the block its claims as JSON and keeps its rules: the claims, the lifetimes, the identity header's 30-second reuse. The header is `{"alg":"ES256","kid":"<key_id>","typ":"<type>"}`, of the type `JWT` for the client assertion and `session-identity+jwt` for the identity header. `/_session/jwks` is the block's key set of the two purposes, served with `Cache-Control: max-age=300`. The block reads each public key at its start and for each key set, and checks each signature under it before it answers.
 
 Which driver holds each signing purpose is a start-up setting ([0019](decisions/0019-signing-keys-on-aws-kms.md)): `--key client-assertion=awskms`, `--key identity-header=awskms:<key ID, ARN or alias>` or `--key wrapping=awskms`, repeatable, and a purpose not named stays on the key file. On KMS, a purpose's key is found by the alias `alias/<prefix>/<purpose>` (the prefix `session/<site>` by default) or by the key the deployment names. The deployment makes the keys (`ECC_NIST_P256`, `SIGN_VERIFY`) and their key policy; session never makes one, and its role needs `kms:DescribeKey`, `kms:GetPublicKey` and `kms:Sign`. A missing, disabled or wrong key fails the start. The kid stays the key port's `key_id` (on KMS the key ARN and the fingerprint), and the identity header's reuse keeps KMS to about two signatures a minute for each session and audience. Rotation on KMS is a new key and a restart; before the first site that rotates, the JWKS will also keep the previous key for a while (0019).
 
-atoom's `seal` block holds the data keys, one for each purpose of the installation `session/<site>`, never for each person ([0021](decisions/0021-atoom-policy-loader-and-seal-block.md)). It seals the session record, the sign-in record and the cached tokens (AES-256-GCM, bound to the store key as the address) and makes the keyed hashes of the store keys (HMAC-SHA384). Each data key is wrapped for the key purpose `wrapping` (ECDH-P384, on the key file or on KMS as an `ECC_NIST_P384` `KEY_AGREEMENT` key, with `kms:DeriveSharedSecret`), and the wraps live in session's store under `seal/`. An instance opens a data key once and keeps it 15 minutes, so the key port, and KMS, is asked once a key, not for each request. Every replica of an installation uses the same wrapping key. `session` decides which fields it seals. Fields that index entries or conditions use stay readable. `session` declares its purposes to the block and hands it its rules: the core may seal, open and hash under them, and nothing else.
+atoom's `seal` block holds the data keys, one for each purpose of the installation `session/<site>`, never for each person ([0021](decisions/0021-atoom-policy-loader-and-seal-block.md)). It seals the session record, the sign-in record and the cached tokens (AES-256-GCM, bound to the store key as the address) and makes the keyed hashes of the store keys (HMAC-SHA384). Each data key is wrapped for the key purpose `wrapping` (ECDH-P384, on the key file or on KMS as an `ECC_NIST_P384` `KEY_AGREEMENT` key, with `kms:DeriveSharedSecret`), and the wraps live in session's store under `seal/`. An instance opens a data key once and keeps it 15 minutes, so the key port, and KMS, is asked once a key, not for each request. Every replica of an installation uses the same wrapping key. `session` decides which fields it seals. Fields that index entries or conditions use stay readable. `session` declares its purposes to the block and hands it its rules: the core may seal, open and hash under them, the token block may sign and read the public key under the two signing purposes, and nothing else.
 
 ### Policy
 
@@ -391,7 +394,7 @@ Paths are planned ([0003](decisions/0003-repository-contents.md)).
 | The route policy cases and the policy bundle of the examples | `policy/` |
 | Docs: site file reference, "put a site behind it" guide, threat model | `docs/` |
 
-The atoom pin is the release in `go.mod`: 0.5.0, one version for every atoom module. An upgrade is a deliberate bump. While atoom's contracts are `v1alpha1`, a breaking change raises atoom's minor version, and `session` follows it on purpose.
+The atoom pin is the release in `go.mod`: 0.6.0, one version for every atoom module. An upgrade is a deliberate bump. While atoom's contracts are `v1alpha1`, a breaking change raises atoom's minor version, and `session` follows it on purpose.
 
 Not in the repository:
 
@@ -464,10 +467,11 @@ Not yet in the suite: the API Gateway authorizer (step 5, in a real account), a 
 | Signing keys on AWS KMS, the choices of step 3.3 | [0019](decisions/0019-signing-keys-on-aws-kms.md) |
 | The conformance suite, the choices of step 3.4 | [0020](decisions/0020-conformance-suite.md) |
 | atoom 0.5.0: the policy loader and the seal block | [0021](decisions/0021-atoom-policy-loader-and-seal-block.md) |
+| atoom 0.6.0: the token block | [0022](decisions/0022-atoom-token-block.md) |
 
 ## 16. Status and next steps
 
-Built: nothing in production, so nothing sealed under an earlier format has to be read again. The first spike ran the check core, Envoy, nginx and the Lambda handlers on sample events against Keycloak and DynamoDB Local ([findings](archive/spike-2026-11-18.md), [code](../spike/)). session runs on atoom 0.5.0: the `store`, `key` and `source` ports and their drivers, the `seal` block and the Cedar loader `policy` ([0021](decisions/0021-atoom-policy-loader-and-seal-block.md)).
+Built: nothing in production, so nothing sealed under an earlier format has to be read again. The first spike ran the check core, Envoy, nginx and the Lambda handlers on sample events against Keycloak and DynamoDB Local ([findings](archive/spike-2026-11-18.md), [code](../spike/)). session runs on atoom 0.6.0: the `store`, `key` and `source` ports and their drivers, `key/route`, the `seal` and `token` blocks and the Cedar loader `policy` ([0021](decisions/0021-atoom-policy-loader-and-seal-block.md), [0022](decisions/0022-atoom-token-block.md)).
 
 The fit spike ran the check core on atoom's `store/dynamodb`, `key/software` and `source/file` in-process, and the authorizer events through the Lambda Web Adapter ([findings](spike-2026-11-22.md), [code](../spike/)). The real-AWS checks are a script for the maintainer, not yet run.
 
@@ -481,6 +485,7 @@ Planned, in order:
    3. **AWS KMS** (built, [0019](decisions/0019-signing-keys-on-aws-kms.md)): the `key/awskms` driver as a start-up setting for each of the client assertion and the identity header (`--key PURPOSE=awskms[:KEY]`), tested on an in-process KMS double and against Keycloak. Needs nothing newer from atoom: `key/awskms` 0.3.0. The real-AWS check is part of step 5.
    4. **The conformance suite** (built, [0020](decisions/0020-conformance-suite.md)): `conformance/`, `just test-conformance`, in CI. Chromium's headless shell, driven by chromedp, runs the same scenarios through Envoy over gRPC, Envoy over HTTP and nginx, each with its example as it is, against Keycloak, and asserts each host's documented answer where the hosts differ. API Gateway and the Lambda authorizer cannot run without AWS: their run of the scenarios is part of the real-AWS check of step 5.
    5. **atoom 0.5.0** (built, [0021](decisions/0021-atoom-policy-loader-and-seal-block.md)): every atoom pin at 0.5.0; atoom's policy loader in place of the interim one (a signed bundle, one pinned key, strict schema validation, the SHA-384 digest); atoom's `seal` block in place of the local sealer (the wrapping key on the key port, the wraps in session's store). The sealed format changed; nothing was deployed.
+   6. **atoom 0.6.0** (built, [0022](decisions/0022-atoom-token-block.md), proposed): every atoom pin at 0.6.0; atoom's `token` block in place of session's own JWS code for the client assertion, the identity header and `/_session/jwks`, over the seal block, with `key/route` in front of the key drivers. Issuers and apps see the same headers, claims and keys.
 4. **First version** for the first sites.
 5. **Lambda:** the sign-in handler behind the Web Adapter and the authorizer as a native Go handler ([0014](decisions/0014-authorizer-native-go-handler.md)), HTTP API first, then REST API. The real-AWS check runs the conformance scenarios through API Gateway ([0020](decisions/0020-conformance-suite.md)).
 6. **sluis v2 as an issuer** once PAR and `private_key_jwt` land there. Sites on sluis v1 wait for v2.
