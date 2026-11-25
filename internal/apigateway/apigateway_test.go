@@ -57,7 +57,7 @@ func newSite(t *testing.T) *site {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := core.New(core.Options{Items: items, Seal: seal, Issuer: issuer{}, Identity: signer{}, Audit: aud, Rules: core.Rules{
+	c, err := core.New(core.Options{Items: items, Seal: seal, Issuers: map[string]core.Issuer{"https://issuer.example.test": issuer{}}, Identity: signer{}, Audit: aud, Rules: core.Rules{
 		Site: "docs", Host: "docs.example.test", StoreTimeout: 300 * time.Millisecond,
 		Routes: []core.Route{
 			{Prefix: "/assets/", Mode: core.ModePublic},

@@ -154,7 +154,11 @@ func (c *Core) exchange(ctx context.Context, s *Session, audience string, entry 
 	if err := c.freshen(ctx, s); err != nil {
 		return "", err
 	}
-	t, err := c.issuer.Exchange(ctx, s.AccessToken, audience)
+	iss, err := c.issuerOf(s)
+	if err != nil {
+		return "", err
+	}
+	t, err := iss.Exchange(ctx, s.AccessToken, audience)
 	var refused *RefusedError
 	if errors.As(err, &refused) {
 		c.Emit(ctx, Event{Kind: EventExchange, Subject: s.Subject, Issuer: s.Issuer, Audience: audience, Reason: refused.Code})
@@ -193,6 +197,15 @@ func (c *Core) putExchanged(ctx context.Context, key []byte, token string, ends 
 	return err
 }
 
+// issuerOf is the client of the session's own issuer (decision 0034): the exchange and the refresh never go to another issuer.
+// A session whose issuer has no client is an outage, not a refusal: core.New checks that every issuer of the rules has one.
+func (c *Core) issuerOf(s *Session) (Issuer, error) {
+	if iss := c.issuers[s.Issuer]; iss != nil {
+		return iss, nil
+	}
+	return nil, errors.New("session: no exchange client for the session's issuer")
+}
+
 // freshen refreshes the sign-in access token when it ends within the skew (decision 0005: under the same lock). A refresh the
 // issuer refuses with invalid_grant (the refresh token is no longer good), or a session without a refresh token, ends the
 // session (errSessionEnded). Any other refusal (such as invalid_client, a fault of the installation, not of the person) and
@@ -211,7 +224,11 @@ func (c *Core) freshen(ctx context.Context, s *Session) error {
 	if s.RefreshToken == "" {
 		return end("no_refresh_token")
 	}
-	r, err := c.issuer.Refresh(ctx, s.RefreshToken)
+	iss, err := c.issuerOf(s)
+	if err != nil {
+		return err
+	}
+	r, err := iss.Refresh(ctx, s.RefreshToken)
 	var refused *RefusedError
 	if errors.As(err, &refused) && refused.Code == "invalid_grant" {
 		return end(refused.Code)

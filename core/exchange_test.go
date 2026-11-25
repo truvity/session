@@ -105,7 +105,7 @@ func exchangeRules() core.Rules {
 func withExchange(iss *fakeIssuer, sig *fakeSigner) option {
 	return func(o *core.Options) {
 		o.Rules = exchangeRules()
-		o.Issuer = iss
+		o.Issuers = map[string]core.Issuer{"https://issuer.example.test": iss}
 		o.Identity = sig
 	}
 }
@@ -488,8 +488,9 @@ func TestAnIdentityHeaderRouteCarriesTheSignedIdentity(t *testing.T) {
 func TestTheModesNeedTheirDependencies(t *testing.T) {
 	e := newEnv(t, "storetest")
 	for name, o := range map[string]core.Options{
-		"exchange without issuer":        {Rules: exchangeRules(), Items: e.items, Seal: e.seal, Identity: &fakeSigner{}},
-		"identity-header without signer": {Rules: exchangeRules(), Items: e.items, Seal: e.seal, Issuer: &fakeIssuer{}},
+		"exchange without issuer": {Rules: exchangeRules(), Items: e.items, Seal: e.seal, Identity: &fakeSigner{}},
+		"identity-header without signer": {Rules: exchangeRules(), Items: e.items, Seal: e.seal,
+			Issuers: map[string]core.Issuer{"https://issuer.example.test": &fakeIssuer{}}},
 	} {
 		if _, err := core.New(o); err == nil {
 			t.Errorf("%s: started", name)
@@ -513,5 +514,34 @@ func (e *env) storeKeys(t *testing.T) []string {
 		if token = res.Msg.GetNextPageToken(); len(token) == 0 {
 			return keys
 		}
+	}
+}
+
+// A site of several issuers (decision 0034): a session's exchange and refresh go to its own issuer, never to another; the block
+// refuses to start when an issuer of the rules has no client.
+func TestTheExchangeGoesToTheSessionsIssuer(t *testing.T) {
+	corp, partner := &fakeIssuer{expiresIn: 5 * time.Minute}, &fakeIssuer{expiresIn: 5 * time.Minute}
+	const corpURL, partnerURL = "https://issuer.example.test", "https://partner.example.test"
+	e := newEnv(t, "storetest", func(o *core.Options) {
+		o.Rules = exchangeRules()
+		o.Rules.Issuers = []string{corpURL, partnerURL}
+		o.Issuers = map[string]core.Issuer{corpURL: corp, partnerURL: partner}
+		o.Identity = &fakeSigner{}
+	})
+	ctx := context.Background()
+	id, err := e.core.Create(ctx, &core.Record{Subject: "bob", Issuer: partnerURL, SID: "sid-2", AccessToken: "partner-access",
+		RefreshToken: "partner-refresh", AccessExpiry: e.clock.Now().Add(10 * time.Second).Unix()}, e.clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bearer(t, e.core.Check(ctx, req("GET", "/api/billing/x", "Cookie", e.cookie(id))))
+	if corp.exchanges.Load() != 0 || corp.refreshes.Load() != 0 || partner.exchanges.Load() != 1 || partner.refreshes.Load() != 1 {
+		t.Fatalf("corp %d/%d, partner %d/%d", corp.exchanges.Load(), corp.refreshes.Load(), partner.exchanges.Load(), partner.refreshes.Load())
+	}
+	missing := exchangeRules()
+	missing.Issuers = []string{corpURL, partnerURL}
+	if _, err := core.New(core.Options{Rules: missing, Items: e.items, Seal: e.seal, Identity: &fakeSigner{},
+		Issuers: map[string]core.Issuer{corpURL: corp}}); err == nil {
+		t.Fatal("started without the partner's client")
 	}
 }

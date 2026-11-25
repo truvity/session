@@ -4,7 +4,7 @@ The conformance scenarios of `conformance/` against a deployed site ([decision 0
 
 ```sh
 export SESSION_REMOTE_MIMIC_TOKEN=...     # a token for mimic's POST /session, never on the command line
-just test-remote HOST=docs.devel.example.com ISSUER=https://idp.devel.example.com/realms/session-conformance \
+just test-remote HOST=docs.devel.example.com ISSUER=conformance \
   IDP=mimic HINT=alice EMAIL=alice@example-a.test MIMIC=https://mimic.devel.example.com
 ```
 
@@ -30,7 +30,7 @@ A run takes about seven minutes, most of it the two lifetimes. The scenarios run
 
 ## What the site needs
 
-- The site file [`site.yaml`](site.yaml), with `host` and `issuer` set to the deployment's: the suite's routes, and the short lifetimes. Every route sends to the test backend `ghcr.io/truvity/session-echo` (port 8080), which echoes each request's method, path and headers as JSON. It echoes the exchanged token and the identity header too, so it stands only behind a test site.
+- The site file [`site.yaml`](site.yaml), with `host` and the issuer set to the deployment's (a site of several issuers lists each under `issuers`, and the runner signs in through the one `ISSUER` names): the suite's routes, and the short lifetimes. Every route sends to the test backend `ghcr.io/truvity/session-echo` (port 8080), which echoes each request's method, path and headers as JSON. It echoes the exchanged token and the identity header too, so it stands only behind a test site.
 - A realm with the client `session-docs` (`private_key_jwt`, redirect `https://<host>/_session/callback`, post-logout redirect `https://<host>/`), a client `billing` that `session-docs` may exchange to, no client `no-such-client`, and a brokered provider whose first sign-in asks nothing.
 
 ## Settings
@@ -40,7 +40,7 @@ Each `KEY=VALUE` argument becomes `SESSION_REMOTE_<KEY>`; the variables may be s
 | Key | Meaning |
 | --- | --- |
 | `HOST` | The site's host (required), with a port when it is not 443 |
-| `ISSUER` | The realm's issuer; the site file's when not given |
+| `ISSUER` | The id of the site file's issuer to sign in through (decision 0034); not needed when the site file has one issuer. The issuer's identifier comes from the site file |
 | `SITE_FILE` | The site file the site runs, for its name and lifetimes; `conformance/remote/site.yaml` when not given |
 | `IDP` | The alias of the brokered provider at Keycloak, added to the sign-in as `kc_idp_hint` |
 | `HINT` | The test identity, added as `login_hint` and picked at mimic's chooser |
@@ -53,7 +53,7 @@ Each `KEY=VALUE` argument becomes `SESSION_REMOTE_<KEY>`; the variables may be s
 | `AUDIT` | A command that prints the site's audit records since `$SESSION_REMOTE_SINCE`, one JSON record a line |
 | `SKIP` | go test's `-skip` pattern |
 
-The runner adds `kc_idp_hint` and `login_hint` to the browser's requests to the issuer's authorization endpoint, so session's own sign-in request is unchanged. mimic signs in the identity of the hint at once when the browser has a session there, which the token hands over as a CI job does.
+The runner adds `kc_idp_hint` and `login_hint` to the browser's requests to the issuer's authorization endpoint, so session's own sign-in request is unchanged. On a site of several issuers it adds `?issuer=<ISSUER>` to the browser's requests for the sign-in page, which sends the browser on to that issuer at once, as a click on its link would. mimic signs in the identity of the hint at once when the browser has a session there, which the token hands over as a CI job does.
 
 ## Audit
 

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/truvity/atoom/store/gen/atoom/store/v1alpha1/storev1alpha1connect"
@@ -17,8 +18,10 @@ type Options struct {
 	Seal Sealer
 	// Policy decides who may reach a route; nil lets the route table decide alone.
 	Policy Policy
-	// Issuer is the client of the issuer's token endpoint, for the route mode exchange. Required when a route uses it.
-	Issuer Issuer
+	// Issuers are the clients of the issuers' token endpoints, for the route mode exchange, by issuer identifier (the iss of
+	// the ID token, Record.Issuer): a session's exchange and refresh go to its own issuer (decision 0034). Required, one for
+	// each of Rules.Issuers, when a route uses the mode.
+	Issuers map[string]Issuer
 	// Identity signs the identity header, for the route mode identity-header. Required when a route uses it.
 	Identity Signer
 	// Audit takes the security-audit events; nil drops them.
@@ -35,7 +38,7 @@ type Core struct {
 	items    storev1alpha1connect.ItemServiceClient
 	seal     Sealer
 	policy   Policy
-	issuer   Issuer
+	issuers  map[string]Issuer
 	identity *identityCache
 	audit    Auditor
 	metrics  *Metrics
@@ -52,13 +55,20 @@ func New(o Options) (*Core, error) {
 		return nil, err
 	}
 	needIssuer, needIdentity := o.Rules.needs()
-	if needIssuer && o.Issuer == nil {
+	if needIssuer && len(o.Issuers) == 0 {
 		return nil, errors.New("session core: a route of mode exchange needs the issuer client")
+	}
+	if needIssuer {
+		for _, iss := range o.Rules.Issuers {
+			if o.Issuers[iss] == nil {
+				return nil, fmt.Errorf("session core: a route of mode exchange needs the client of the issuer %s", iss)
+			}
+		}
 	}
 	if needIdentity && o.Identity == nil {
 		return nil, errors.New("session core: a route of mode identity-header needs the identity signer")
 	}
-	c := &Core{rules: o.Rules, items: o.Items, seal: o.Seal, policy: o.Policy, issuer: o.Issuer, audit: o.Audit, metrics: o.Metrics, now: o.Now}
+	c := &Core{rules: o.Rules, items: o.Items, seal: o.Seal, policy: o.Policy, issuers: o.Issuers, audit: o.Audit, metrics: o.Metrics, now: o.Now}
 	if o.Identity != nil {
 		c.identity = newIdentityCache(o.Identity)
 	}

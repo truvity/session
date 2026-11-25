@@ -27,6 +27,7 @@ type fakeIssuer struct {
 	status     int  // the revocation endpoint's answer
 	mu         sync.Mutex
 	revoked    []url.Values
+	pars       []url.Values // the pushed authorization requests, for the tests of several issuers
 }
 
 func newFakeIssuer(t *testing.T, revocation bool, status int) *fakeIssuer {
@@ -50,6 +51,15 @@ func newFakeIssuer(t *testing.T, revocation bool, status int) *fakeIssuer {
 		f.revoked = append(f.revoked, r.PostForm)
 		f.mu.Unlock()
 		w.WriteHeader(f.status)
+	})
+	mux.HandleFunc("POST /par", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.mu.Lock()
+		f.pars = append(f.pars, r.PostForm)
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"request_uri":"urn:example:par:1","expires_in":60}`))
 	})
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
@@ -95,8 +105,9 @@ func newLogoutSite(t *testing.T, f *fakeIssuer) *logoutSite {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := signin.New(context.Background(), signin.Options{Core: c, Issuer: f.srv.URL, ClientID: "session-docs",
-		Scopes: []string{"openid"}, Signer: signer, Identity: &identity})
+	h, err := signin.New(context.Background(), signin.Options{Core: c,
+		Issuers: []signin.Issuer{{ID: "corp", Label: "Example Corp", URL: f.srv.URL, ClientID: "session-docs", Scopes: []string{"openid"}}},
+		Signer:  signer, Identity: &identity})
 	if err != nil {
 		t.Fatal(err)
 	}

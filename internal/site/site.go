@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	atpolicy "github.com/truvity/atoom/policy"
@@ -20,17 +21,43 @@ import (
 
 // File is the site file as written.
 type File struct {
-	Site    string   `yaml:"site"`
-	Host    string   `yaml:"host"`
-	Issuer  string   `yaml:"issuer"`
-	Client  Client   `yaml:"client"`
-	Scopes  []string `yaml:"scopes"`
+	Site string `yaml:"site"`
+	Host string `yaml:"host"`
+	// Issuers are the site's issuers, one or more (decision 0034). With one, the sign-in goes to it at once; with several, the
+	// person picks one on the sign-in page.
+	Issuers []Issuer `yaml:"issuers"`
+	SignIn  SignIn   `yaml:"signin"`
 	Session Session  `yaml:"session"`
 	Policy  *Policy  `yaml:"policy"`
 	// ErrorPage names a document of the source port: the HTML page a navigation gets when the issuer refuses the exchange of
 	// its route. Empty is the built-in page.
 	ErrorPage string  `yaml:"error_page"`
 	Routes    []Route `yaml:"routes"`
+
+	// The keys of one issuer before decision 0034, decoded only to name the move when a file still has them.
+	OldIssuer any `yaml:"issuer"`
+	OldClient any `yaml:"client"`
+	OldScopes any `yaml:"scopes"`
+}
+
+// Issuer is one issuer of the site and the site's client at it.
+type Issuer struct {
+	// ID names the issuer in the site: ?issuer=<id> of the sign-in paths, and the remembered choice. 1 to 32 lower-case letters,
+	// digits and '-'.
+	ID string `yaml:"id"`
+	// Label is what the sign-in page shows: "Sign in with <label>".
+	Label string `yaml:"label"`
+	// Issuer is the issuer identifier, an https URL; its discovery document is <issuer>/.well-known/openid-configuration.
+	Issuer string   `yaml:"issuer"`
+	Client Client   `yaml:"client"`
+	Scopes []string `yaml:"scopes"`
+}
+
+// SignIn holds the settings of the sign-in page.
+type SignIn struct {
+	// RememberChoice, when set, keeps the issuer a person signed in with in a cookie for that long, and the next sign-in that
+	// names no issuer goes to it without the page. Unset (the default) remembers nothing.
+	RememberChoice string `yaml:"remember_choice"`
 }
 
 // Client is the site's client at the issuer. Its key is the key port's purpose client-assertion; which key driver holds it is a
@@ -110,28 +137,70 @@ func duration(name, s string, def time.Duration) (time.Duration, error) {
 	return d, nil
 }
 
-// Rules turns the file into the core's rules, and checks what the core does not: the issuer, the client and the scopes.
+// Remember is the lifetime of the remembered choice of issuer; 0 remembers nothing.
+func (f *File) Remember() time.Duration {
+	d, err := duration("signin.remember_choice", f.SignIn.RememberChoice, 0)
+	if err != nil {
+		return 0
+	}
+	return d
+}
+
+// checkIssuers checks the issuers: one or more, each id and issuer identifier once, each with its label, client and scopes.
+func (f *File) checkIssuers() []error {
+	var errs []error
+	if f.OldIssuer != nil || f.OldClient != nil || f.OldScopes != nil {
+		errs = append(errs, errors.New("issuer, client and scopes: moved into an entry of issuers (decision 0034)"))
+	}
+	if len(f.Issuers) == 0 {
+		errs = append(errs, errors.New("issuers: at least one issuer"))
+	}
+	ids, urls := map[string]bool{}, map[string]bool{}
+	for i, is := range f.Issuers {
+		at := fmt.Sprintf("issuers[%d]", i)
+		if !core.ValidSiteName(is.ID) {
+			errs = append(errs, fmt.Errorf("%s.id %q: 1 to 32 lower-case letters, digits and '-'", at, is.ID))
+		}
+		if ids[is.ID] {
+			errs = append(errs, fmt.Errorf("%s.id %q: used twice", at, is.ID))
+		}
+		ids[is.ID] = true
+		if strings.TrimSpace(is.Label) == "" || len(is.Label) > 64 {
+			errs = append(errs, fmt.Errorf("%s.label: the name the sign-in page shows, at most 64 characters", at))
+		}
+		if u, err := url.Parse(is.Issuer); err != nil || u.Scheme != "https" || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+			// An issuer on plain HTTP is accepted only on the loopback, for tests against a local Keycloak.
+			if err != nil || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost") {
+				errs = append(errs, fmt.Errorf("%s.issuer %q: an https URL", at, is.Issuer))
+			}
+		}
+		if urls[is.Issuer] {
+			errs = append(errs, fmt.Errorf("%s.issuer %q: used twice", at, is.Issuer))
+		}
+		urls[is.Issuer] = true
+		if is.Client.ID == "" {
+			errs = append(errs, fmt.Errorf("%s.client.id: required", at))
+		}
+		if is.Client.Auth != "private_key_jwt" {
+			errs = append(errs, fmt.Errorf("%s.client.auth %q: private_key_jwt (S3)", at, is.Client.Auth))
+		}
+		if !slices.Contains(is.Scopes, "openid") {
+			errs = append(errs, fmt.Errorf("%s.scopes: must include openid", at))
+		}
+	}
+	return errs
+}
+
+// Rules turns the file into the core's rules, and checks what the core does not: the issuers, their clients and scopes.
 func (f *File) Rules() (core.Rules, error) {
 	var errs []error
 	idle, err := duration("session.idle", f.Session.Idle, core.DefaultIdle)
 	errs = append(errs, err)
 	maxLife, err := duration("session.max", f.Session.Max, core.DefaultMax)
 	errs = append(errs, err)
-	if u, err := url.Parse(f.Issuer); err != nil || u.Scheme != "https" || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
-		// An issuer on plain HTTP is accepted only on the loopback, for tests against a local Keycloak.
-		if err != nil || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost") {
-			errs = append(errs, fmt.Errorf("issuer %q: an https URL", f.Issuer))
-		}
-	}
-	if f.Client.ID == "" {
-		errs = append(errs, errors.New("client.id: required"))
-	}
-	if f.Client.Auth != "private_key_jwt" {
-		errs = append(errs, fmt.Errorf("client.auth %q: private_key_jwt (S3)", f.Client.Auth))
-	}
-	if !slices.Contains(f.Scopes, "openid") {
-		errs = append(errs, errors.New("scopes: must include openid"))
-	}
+	_, err = duration("signin.remember_choice", f.SignIn.RememberChoice, 0)
+	errs = append(errs, err)
+	errs = append(errs, f.checkIssuers()...)
 	if f.Policy != nil && f.Policy.Bundle == "" {
 		errs = append(errs, errors.New("policy.bundle: the name of the bundle document"))
 	}
@@ -144,6 +213,9 @@ func (f *File) Rules() (core.Rules, error) {
 		errs = append(errs, fmt.Errorf("error_page %q: a document of its own", f.ErrorPage))
 	}
 	r := core.Rules{Site: f.Site, Host: f.Host, Idle: idle, Max: maxLife}
+	for _, is := range f.Issuers {
+		r.Issuers = append(r.Issuers, is.Issuer)
+	}
 	for _, rt := range f.Routes {
 		r.Routes = append(r.Routes, core.Route{Name: rt.Name, Prefix: rt.Match.Prefix, Exact: rt.Match.Exact,
 			Mode: core.Mode(rt.Mode), Unauthenticated: core.Unauthenticated(rt.Unauthenticated), Audience: rt.Audience})

@@ -33,7 +33,7 @@ func newSite(t *testing.T) *site {
 	items, stop := mem.Client()
 	t.Cleanup(stop)
 	sealer := sealertest.New(t)
-	c, err := core.New(core.Options{Items: items, Seal: sealer, Issuer: issuer{}, Identity: signer{}, Rules: core.Rules{
+	c, err := core.New(core.Options{Items: items, Seal: sealer, Issuers: map[string]core.Issuer{"https://issuer.example.test": issuer{}}, Identity: signer{}, Rules: core.Rules{
 		Site: "docs", Host: "docs.example.test", StoreTimeout: 300 * time.Millisecond,
 		Routes: []core.Route{
 			{Prefix: "/assets/", Mode: core.ModePublic},

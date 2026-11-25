@@ -47,7 +47,7 @@ func TestTheIdentityHeaderOnAWSKMSSignsAboutTwiceAMinute(t *testing.T) {
 	}
 	e := newEnv(t, "storetest", func(o *core.Options) {
 		o.Rules = exchangeRules()
-		o.Issuer = &fakeIssuer{}
+		o.Issuers = map[string]core.Issuer{"https://issuer.example.test": &fakeIssuer{}}
 		o.Identity = identity
 	})
 	id := e.signInWith(t, time.Time{}, "")

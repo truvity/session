@@ -1,4 +1,5 @@
-// Package signin is the sign-in handler: the paths under /_session/ (decision 0004). Login with authorisation code, PKCE, PAR and
+// Package signin is the sign-in handler: the paths under /_session/ (decision 0004), for one or more issuers (decision 0034). The
+// sign-in page with one link for each issuer; login with authorisation code, PKCE, PAR and
 // private_key_jwt (S3); the callback with the binding cookie, state, iss (RFC 9207) and ID token checks; logout as a POST with
 // CSRF, then the issuer's end-session (S6); back-channel logout (OIDC Back-Channel Logout 1.0); whoami; jwks.
 //
@@ -9,10 +10,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -30,27 +33,40 @@ import (
 	"github.com/truvity/session/core"
 )
 
-// Options configure the handler.
-type Options struct {
-	Core     *core.Core
-	Issuer   string
+// Issuer is one issuer of the site and the site's client at it (decision 0034).
+type Issuer struct {
+	// ID names the issuer in the site: ?issuer=<id>, and the remembered choice.
+	ID string
+	// Label is what the sign-in page shows: "Sign in with <Label>".
+	Label string
+	// URL is the issuer identifier; its discovery document is read at the start.
+	URL      string
 	ClientID string
 	Scopes   []string
-	Signer   Signer
+}
+
+// Options configure the handler.
+type Options struct {
+	Core *core.Core
+	// Issuers are the site's issuers, one or more, in the order of the sign-in page.
+	Issuers []Issuer
+	// Signer signs the client assertion at every issuer: one key, the purpose client-assertion, published at /_session/jwks.
+	Signer Signer
 	// Identity is the signer of the identity header, whose public key /_session/jwks publishes too; nil publishes the client
 	// key alone.
 	Identity *Signer
+	// Remember, when positive, keeps the issuer a person signed in with in a cookie for that long, and a sign-in that names no
+	// issuer goes to it without the sign-in page. Zero remembers nothing.
+	Remember time.Duration
 	// HTTP is the client for the issuer's endpoints; nil is a client with a 10 s timeout.
 	HTTP *http.Client
 	// Log is the operational log; nil is slog.Default().
 	Log *slog.Logger
 }
 
-// Handler serves the sign-in paths of one site.
-type Handler struct {
-	o         Options
-	core      *core.Core
-	origin    string // https://<site host>
+// issuer is one issuer as the handler uses it: its discovery, its verifiers and the site's client at it.
+type issuer struct {
+	Issuer
 	provider  *oidc.Provider
 	idTokens  *oidc.IDTokenVerifier
 	logouts   *oidc.IDTokenVerifier
@@ -60,10 +76,21 @@ type Handler struct {
 		Revocation string `json:"revocation_endpoint"`
 		IssParam   bool   `json:"authorization_response_iss_parameter_supported"`
 	}
-	log *slog.Logger
 }
 
-// New reads the issuer's discovery document and returns the handler. The issuer must offer PAR (S3).
+// Handler serves the sign-in paths of one site.
+type Handler struct {
+	o       Options
+	core    *core.Core
+	origin  string // https://<site host>
+	issuers []*issuer
+	byID    map[string]*issuer
+	byURL   map[string]*issuer
+	page    *template.Template
+	log     *slog.Logger
+}
+
+// New reads each issuer's discovery document and returns the handler. Every issuer must offer PAR (S3).
 func New(ctx context.Context, o Options) (*Handler, error) {
 	if o.HTTP == nil {
 		o.HTTP = &http.Client{Timeout: 10 * time.Second}
@@ -71,25 +98,38 @@ func New(ctx context.Context, o Options) (*Handler, error) {
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
-	p, err := oidc.NewProvider(oidc.ClientContext(ctx, o.HTTP), o.Issuer)
-	if err != nil {
-		return nil, fmt.Errorf("signin: discovery of the issuer: %w", err)
+	if len(o.Issuers) == 0 {
+		return nil, errors.New("signin: at least one issuer")
 	}
-	h := &Handler{o: o, core: o.Core, origin: "https://" + o.Core.Rules().Host, provider: p, log: o.Log}
-	if err := p.Claims(&h.endpoints); err != nil {
-		return nil, err
+	h := &Handler{o: o, core: o.Core, origin: "https://" + o.Core.Rules().Host, byID: map[string]*issuer{}, byURL: map[string]*issuer{},
+		page: signInPage, log: o.Log}
+	for _, is := range o.Issuers {
+		if is.ID == "" || h.byID[is.ID] != nil || h.byURL[is.URL] != nil {
+			return nil, fmt.Errorf("signin: the issuer %q: an id and an issuer identifier, each once", is.ID)
+		}
+		p, err := oidc.NewProvider(oidc.ClientContext(ctx, o.HTTP), is.URL)
+		if err != nil {
+			return nil, fmt.Errorf("signin: discovery of the issuer %s: %w", is.ID, err)
+		}
+		e := &issuer{Issuer: is, provider: p}
+		if err := p.Claims(&e.endpoints); err != nil {
+			return nil, err
+		}
+		if e.endpoints.PAR == "" {
+			return nil, fmt.Errorf("signin: the issuer %s offers no pushed authorization request endpoint (S3 needs PAR)", is.ID)
+		}
+		e.idTokens = p.VerifierContext(oidc.ClientContext(context.Background(), o.HTTP), &oidc.Config{ClientID: is.ClientID})
+		e.logouts = p.VerifierContext(oidc.ClientContext(context.Background(), o.HTTP), &oidc.Config{ClientID: is.ClientID})
+		h.issuers = append(h.issuers, e)
+		h.byID[is.ID], h.byURL[is.URL] = e, e
 	}
-	if h.endpoints.PAR == "" {
-		return nil, errors.New("signin: the issuer offers no pushed authorization request endpoint (S3 needs PAR)")
-	}
-	h.idTokens = p.VerifierContext(oidc.ClientContext(context.Background(), o.HTTP), &oidc.Config{ClientID: o.ClientID})
-	h.logouts = p.VerifierContext(oidc.ClientContext(context.Background(), o.HTTP), &oidc.Config{ClientID: o.ClientID})
 	return h, nil
 }
 
 // Register adds the paths to a mux.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+core.PathLogin, h.Login)
+	mux.HandleFunc("GET "+core.PathSignIn, h.SignInPage)
 	mux.HandleFunc("GET "+core.PathCallback, h.Callback)
 	mux.HandleFunc("POST "+core.PathLogout, h.Logout)
 	mux.HandleFunc("POST "+core.PathBackChannel, h.BackChannel)
@@ -139,8 +179,8 @@ func hashOf(s string) string {
 }
 
 // postForm sends a form with the client's assertion to an endpoint of the issuer and decodes the JSON answer.
-func (h *Handler) postForm(ctx context.Context, endpoint string, v url.Values, out any) (int, error) {
-	status, body, err := h.post(ctx, endpoint, v)
+func (h *Handler) postForm(ctx context.Context, is *issuer, endpoint string, v url.Values, out any) (int, error) {
+	status, body, err := h.post(ctx, is, endpoint, v)
 	if err != nil {
 		return status, err
 	}
@@ -150,13 +190,14 @@ func (h *Handler) postForm(ctx context.Context, endpoint string, v url.Values, o
 	return status, nil
 }
 
-// post sends a form with the client's assertion to an endpoint of the issuer and returns the status and the body.
-func (h *Handler) post(ctx context.Context, endpoint string, v url.Values) (int, []byte, error) {
-	a, err := h.o.Signer.ClientAssertion(ctx, h.o.ClientID, h.o.Issuer, time.Now())
+// post sends a form with the site's client assertion at the issuer to an endpoint of that issuer and returns the status and the
+// body. The assertion's audience is that issuer's identifier, so an assertion made for one issuer is no good at another.
+func (h *Handler) post(ctx context.Context, is *issuer, endpoint string, v url.Values) (int, []byte, error) {
+	a, err := h.o.Signer.ClientAssertion(ctx, is.ClientID, is.URL, time.Now())
 	if err != nil {
 		return 0, nil, fmt.Errorf("client assertion: %w", err)
 	}
-	v.Set("client_id", h.o.ClientID)
+	v.Set("client_id", is.ClientID)
 	v.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
 	v.Set("client_assertion", a)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(v.Encode()))
@@ -174,13 +215,25 @@ func (h *Handler) post(ctx context.Context, endpoint string, v url.Values) (int,
 	return res.StatusCode, body, err
 }
 
-// Login starts a sign-in: a transaction by state, PAR with the client's assertion, then the browser goes to the issuer with
-// only client_id and request_uri, and gets the binding cookie.
+// Login starts a sign-in at one issuer: ?issuer=<id>, or the only issuer of the site, or the remembered choice. Without one of
+// them a site of several issuers sends the browser to the sign-in page. Then a transaction by state that names the issuer, PAR
+// at that issuer with the client's assertion, and the browser goes to the issuer with only client_id and request_uri, and gets
+// the binding cookie.
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
+	is, ok := h.chosen(r)
+	if !ok {
+		h.fail(w, http.StatusBadRequest, "login", "issuer")
+		return
+	}
+	if is == nil {
+		noStore(w)
+		http.Redirect(w, r, core.PathSignIn+"?"+url.Values{"return_to": {returnTo}}.Encode(), http.StatusFound)
+		return
+	}
 	state, nonce, binding, verifier := core.NewID(), core.NewID(), core.NewID(), oauth2.GenerateVerifier()
-	tx := &core.SignIn{Verifier: verifier, Nonce: nonce, ReturnTo: returnTo, BindingHash: hashOf(binding), Started: h.core.Now()}
+	tx := &core.SignIn{Issuer: is.ID, Verifier: verifier, Nonce: nonce, ReturnTo: returnTo, BindingHash: hashOf(binding), Started: h.core.Now()}
 	if err := h.core.PutSignIn(ctx, state, tx); err != nil {
 		h.fail(w, http.StatusServiceUnavailable, "login", "store")
 		return
@@ -188,7 +241,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	params := url.Values{
 		"response_type":         {"code"},
 		"redirect_uri":          {h.redirectURL()},
-		"scope":                 {strings.Join(h.o.Scopes, " ")},
+		"scope":                 {strings.Join(is.Scopes, " ")},
 		"state":                 {state},
 		"nonce":                 {nonce},
 		"code_challenge":        {oauth2.S256ChallengeFromVerifier(verifier)},
@@ -197,15 +250,75 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var par struct {
 		RequestURI string `json:"request_uri"`
 	}
-	status, err := h.postForm(ctx, h.endpoints.PAR, params, &par)
+	status, err := h.postForm(ctx, is, is.endpoints.PAR, params, &par)
 	if err != nil || (status != http.StatusCreated && status != http.StatusOK) || par.RequestURI == "" {
 		h.fail(w, http.StatusBadGateway, "par", fmt.Sprintf("status %d", status))
 		return
 	}
-	q := url.Values{"client_id": {h.o.ClientID}, "request_uri": {par.RequestURI}}
+	q := url.Values{"client_id": {is.ClientID}, "request_uri": {par.RequestURI}}
 	noStore(w)
 	w.Header().Add("Set-Cookie", h.core.BindingCookie(binding))
-	http.Redirect(w, r, h.provider.Endpoint().AuthURL+"?"+q.Encode(), http.StatusFound)
+	http.Redirect(w, r, is.provider.Endpoint().AuthURL+"?"+q.Encode(), http.StatusFound)
+}
+
+// chosen is the issuer of a sign-in: the one ?issuer= names (ok false when it names none of the site's), else the site's only
+// issuer, else the remembered choice when the site remembers it. nil with ok true means the person has to pick.
+func (h *Handler) chosen(r *http.Request) (*issuer, bool) {
+	if id := r.URL.Query().Get("issuer"); id != "" {
+		is := h.byID[id]
+		return is, is != nil
+	}
+	if len(h.issuers) == 1 {
+		return h.issuers[0], true
+	}
+	return h.remembered(r), true
+}
+
+// remembered is the issuer of the remembered-choice cookie, when the site remembers the choice and the cookie names one of its
+// issuers; else nil.
+func (h *Handler) remembered(r *http.Request) *issuer {
+	if h.o.Remember <= 0 {
+		return nil
+	}
+	if c, err := r.Cookie(h.core.ChoiceCookieName()); err == nil {
+		return h.byID[c.Value]
+	}
+	return nil
+}
+
+// SignInPage is the sign-in page: one link for each issuer, "Sign in with <label>", each to the login path with its issuer and
+// the return address. No script, no form, nothing from the issuers. ?issuer=<id> skips the page (CI and the remote runner use
+// it), and a site of one issuer has no page: both go to the login path at once.
+func (h *Handler) SignInPage(w http.ResponseWriter, r *http.Request) {
+	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
+	id := r.URL.Query().Get("issuer")
+	if id != "" && h.byID[id] == nil {
+		h.fail(w, http.StatusBadRequest, "signin", "issuer")
+		return
+	}
+	if id == "" && len(h.issuers) == 1 {
+		id = h.issuers[0].ID
+	}
+	if id != "" {
+		noStore(w)
+		http.Redirect(w, r, core.PathLogin+"?"+url.Values{"issuer": {id}, "return_to": {returnTo}}.Encode(), http.StatusFound)
+		return
+	}
+	data := pageData{}
+	for _, is := range h.issuers {
+		data.Issuers = append(data.Issuers, pageIssuer{Label: is.Label,
+			URL: core.PathLogin + "?" + url.Values{"issuer": {is.ID}, "return_to": {returnTo}}.Encode()})
+	}
+	var b strings.Builder
+	if err := h.page.Execute(&b, data); err != nil {
+		h.fail(w, http.StatusInternalServerError, "signin", "page")
+		return
+	}
+	noStore(w)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", pageCSP)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = io.WriteString(w, b.String())
 }
 
 type tokenAnswer struct {
@@ -242,8 +355,15 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Add("Set-Cookie", h.core.ClearBindingCookie())
+	// The issuer is the one the person chose at login, kept in the transaction: never one the callback names (decision 0034).
+	is := h.byID[tx.Issuer]
+	if is == nil {
+		h.core.Emit(ctx, core.Event{Kind: core.EventSignInFailed, Reason: "issuer"})
+		h.fail(w, http.StatusBadRequest, "callback", "issuer")
+		return
+	}
 	failed := func(status int, reason string) {
-		h.core.Emit(ctx, core.Event{Kind: core.EventSignInFailed, Issuer: h.o.Issuer, Reason: reason})
+		h.core.Emit(ctx, core.Event{Kind: core.EventSignInFailed, Issuer: is.URL, Reason: reason})
 		h.fail(w, status, "callback", reason)
 	}
 	bind := h.core.BindingValue(r.Header)
@@ -251,8 +371,9 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		failed(http.StatusBadRequest, "binding")
 		return
 	}
-	// RFC 9207: the issuer that answered is the one the transaction was started with.
-	if iss := q.Get("iss"); iss != h.o.Issuer && (iss != "" || h.endpoints.IssParam) {
+	// RFC 9207, the mix-up defence: the issuer that answered is the one the transaction was started with. An issuer that does
+	// not send iss is held by the state alone, which names the issuer the code is redeemed at and the ID token verified against.
+	if iss := q.Get("iss"); iss != is.URL && (iss != "" || is.endpoints.IssParam) {
 		failed(http.StatusBadRequest, "iss")
 		return
 	}
@@ -265,7 +386,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var tok tokenAnswer
-	status, err := h.postForm(ctx, h.provider.Endpoint().TokenURL, url.Values{
+	status, err := h.postForm(ctx, is, is.provider.Endpoint().TokenURL, url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {q.Get("code")},
 		"redirect_uri":  {h.redirectURL()},
@@ -275,7 +396,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		failed(http.StatusBadGateway, "token")
 		return
 	}
-	idt, err := h.idTokens.Verify(ctx, tok.IDToken) // signature, iss, aud, exp
+	idt, err := is.idTokens.Verify(ctx, tok.IDToken) // signature, iss, aud, exp: of the chosen issuer
 	if err != nil {
 		failed(http.StatusBadRequest, "id_token")
 		return
@@ -289,7 +410,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		failed(http.StatusBadRequest, "nonce")
 		return
 	}
-	if (len(idt.Audience) > 1 || cl.AZP != "") && cl.AZP != h.o.ClientID {
+	if (len(idt.Audience) > 1 || cl.AZP != "") && cl.AZP != is.ClientID {
 		failed(http.StatusBadRequest, "azp")
 		return
 	}
@@ -318,6 +439,9 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 	noStore(w)
 	w.Header().Add("Set-Cookie", h.core.SessionCookie(id))
+	if h.o.Remember > 0 && len(h.issuers) > 1 {
+		w.Header().Add("Set-Cookie", h.core.ChoiceCookie(is.ID, h.o.Remember))
+	}
 	// The address was checked at login and kept server-side; it is checked again here.
 	http.Redirect(w, r, safeReturnTo(tx.ReturnTo), http.StatusFound) //nolint:gosec // G710: a path of this site only (safeReturnTo)
 }
@@ -337,6 +461,9 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := h.core.SplitCookies(r.Header)
 	var hint, refresh string
+	// The end-session is the session's own issuer's (decision 0034). Without a live session it is the site's only issuer, or
+	// the remembered choice; a site of several issuers that remembers nothing sends the browser back to the site.
+	is, _ := h.chosen(&http.Request{URL: &url.URL{}, Header: r.Header})
 	if id != "" {
 		s, err := h.core.Load(ctx, id)
 		switch {
@@ -346,7 +473,9 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.core.Emit(ctx, core.Event{Kind: core.EventLogout, Subject: s.Subject, Issuer: s.Issuer})
-			hint, refresh = s.IDToken, s.RefreshToken
+			if is = h.byURL[s.Issuer]; is != nil {
+				hint, refresh = s.IDToken, s.RefreshToken
+			}
 		case errors.Is(err, core.ErrNotFound):
 		default:
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "unavailable"})
@@ -354,15 +483,15 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if refresh != "" {
-		h.revoke(ctx, refresh)
+		h.revoke(ctx, is, refresh)
 	}
 	target := h.origin + "/"
-	if h.endpoints.EndSession != "" {
-		q := url.Values{"client_id": {h.o.ClientID}, "post_logout_redirect_uri": {h.origin + "/"}}
+	if is != nil && is.endpoints.EndSession != "" {
+		q := url.Values{"client_id": {is.ClientID}, "post_logout_redirect_uri": {h.origin + "/"}}
 		if hint != "" {
 			q.Set("id_token_hint", hint)
 		}
-		target = h.endpoints.EndSession + "?" + q.Encode()
+		target = is.endpoints.EndSession + "?" + q.Encode()
 	}
 	w.Header().Add("Set-Cookie", h.core.ClearSessionCookie())
 	w.Header().Add("Set-Cookie", h.core.ClearBindingCookie())
@@ -377,8 +506,8 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 // revoke revokes a refresh token at the issuer's revocation endpoint (RFC 7009) with the client's assertion, best effort and
 // bounded by the exchange timeout (decision 0031): only when the issuer names the endpoint; a failure is counted and logged,
 // and the logout goes on, because the session is already deleted.
-func (h *Handler) revoke(ctx context.Context, token string) {
-	if h.endpoints.Revocation == "" {
+func (h *Handler) revoke(ctx context.Context, is *issuer, token string) {
+	if is.endpoints.Revocation == "" {
 		return
 	}
 	bound := h.core.Rules().ExchangeTimeout
@@ -387,7 +516,7 @@ func (h *Handler) revoke(ctx context.Context, token string) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
-	status, _, err := h.post(ctx, h.endpoints.Revocation, url.Values{"token": {token}, "token_type_hint": {"refresh_token"}})
+	status, _, err := h.post(ctx, is, is.endpoints.Revocation, url.Values{"token": {token}, "token_type_hint": {"refresh_token"}})
 	if err == nil && status == http.StatusOK {
 		return
 	}
@@ -410,8 +539,13 @@ func (h *Handler) BackChannel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		return
 	}
+	var is *issuer
 	refuse := func(reason string) {
-		h.core.Emit(ctx, core.Event{Kind: core.EventBackChannelLogout, Issuer: h.o.Issuer, Reason: reason})
+		ev := core.Event{Kind: core.EventBackChannelLogout, Reason: reason}
+		if is != nil {
+			ev.Issuer = is.URL
+		}
+		h.core.Emit(ctx, ev)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 	}
 	raw := r.PostForm.Get("logout_token")
@@ -423,7 +557,13 @@ func (h *Handler) BackChannel(w http.ResponseWriter, r *http.Request) {
 		refuse("typ")
 		return
 	}
-	tok, err := h.logouts.Verify(ctx, raw) // signature, iss, aud, exp
+	// The token is verified by the issuer its iss names, among the site's only, with that issuer's keys and the site's client at
+	// it as aud; its sid or subject then ends only that issuer's sessions, whose index entries are keyed by issuer (decision 0034).
+	if is = h.byURL[unverifiedIssuer(raw)]; is == nil {
+		refuse("issuer")
+		return
+	}
+	tok, err := is.logouts.Verify(ctx, raw) // signature, iss, aud, exp
 	if err != nil {
 		refuse("token")
 		return
@@ -465,6 +605,25 @@ func (h *Handler) BackChannel(w http.ResponseWriter, r *http.Request) {
 	h.core.Emit(ctx, core.Event{Kind: core.EventBackChannelLogout, Subject: tok.Subject, Issuer: tok.Issuer})
 	noStore(w)
 	w.WriteHeader(http.StatusOK)
+}
+
+// unverifiedIssuer reads the iss of a compact JWS's payload without trusting it: it picks the issuer whose keys then verify it.
+func unverifiedIssuer(raw string) string {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	b, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var cl struct {
+		Iss string `json:"iss"`
+	}
+	if json.Unmarshal(b, &cl) != nil {
+		return ""
+	}
+	return cl.Iss
 }
 
 // jwtType reads the typ of a compact JWS header without trusting it.

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"connectrpc.com/connect"
@@ -160,6 +161,10 @@ func (c *Core) loadKey(ctx context.Context, key []byte) (*Session, error) {
 	}
 	now := c.now()
 	if !now.Before(s.Expires) || !now.Before(s.IdleExpires(c.rules.Idle)) {
+		return nil, ErrNotFound
+	}
+	// A session of an issuer the site no longer names is no session (decision 0034).
+	if len(c.rules.Issuers) > 0 && !slices.Contains(c.rules.Issuers, s.Issuer) {
 		return nil, ErrNotFound
 	}
 	return s, nil
@@ -454,6 +459,8 @@ func (c *Core) ClaimOnce(ctx context.Context, name string, until time.Time) (boo
 
 // SignIn is a sign-in transaction: what the callback needs, kept by state, sealed, used once.
 type SignIn struct {
+	// Issuer is the id of the issuer the sign-in was started at: the callback redeems the code there only (decision 0034).
+	Issuer      string    `json:"i"`
 	Verifier    string    `json:"v"`
 	Nonce       string    `json:"n"`
 	ReturnTo    string    `json:"r"`

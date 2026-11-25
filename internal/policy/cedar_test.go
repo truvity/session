@@ -173,3 +173,22 @@ func TestPublisherFromPEM(t *testing.T) {
 		t.Fatal("a key that is not P-384 was accepted")
 	}
 }
+
+// A policy by issuer (decision 0034): principal.issuer is the session's issuer identifier, so a site of several issuers keeps a
+// route to one issuer's people. The same subject at another issuer is another person.
+func TestDecideByIssuer(t *testing.T) {
+	e := policytest.Engine(t, map[string]string{
+		"corp": `permit (principal, action, resource == Route::"admin") when { principal.issuer == "https://issuer.example.test" };`,
+	})
+	other := in("alice")
+	other.Issuer = "https://partner.example.test"
+	for _, tc := range []struct {
+		in    core.PolicyInput
+		allow bool
+	}{{in("alice"), true}, {other, false}} {
+		res, err := e.Decide(context.Background(), tc.in)
+		if err != nil || res.Allow != tc.allow {
+			t.Fatalf("%s: %+v %v", tc.in.Issuer, res, err)
+		}
+	}
+}
