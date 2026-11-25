@@ -7,7 +7,7 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ### The audit transport is an explicit switch
 
-- **Breaking, start-up:** `session serve` takes exactly one of `--audit-socket PATH` and the new `--audit-stdout` ([0024](docs/decisions/0024-audit-transport-is-an-explicit-switch.md), proposed). With neither it refuses to start, and with both too, whatever `--environment` says. `--audit-stdout` writes each security-audit record as one JSON line to stdout, for local development; a local run that relied on an unset `--environment` now adds `--audit-stdout`.
+- **Breaking, start-up:** `session serve` takes exactly one of `--audit-socket PATH` and the new `--audit-stdout` ([0024](docs/decisions/0024-audit-transport-is-an-explicit-switch.md)). With neither it refuses to start, and with both too, whatever `--environment` says. `--audit-stdout` writes each security-audit record as one JSON line to stdout, for local development; a local run that relied on an unset `--environment` now adds `--audit-stdout`.
 - **Breaking, start-up:** `--environment local` is no longer special. `--environment` is a label: the scope of the audit log (`local` when unset) and, until atoom 0.7.0, the environment the software key driver is told, verbatim. atoom 0.6.0's software driver takes only unset, `development`, `staging` or `production`, and refuses any other value when a purpose is on it.
 
 ### Step 3.7: the emitter of truvity/audit
