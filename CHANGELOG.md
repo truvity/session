@@ -5,6 +5,12 @@ What changed in session, newest first. session has no release yet; each entry na
 
 ## Unreleased
 
+### atoom 0.9.0, audit 0.21.0 and the audit catalogue
+
+- **Every atoom module at 0.9.0** and `truvity/audit/emitter` at 0.21.0 ([0036](docs/decisions/0036-atoom-0.9.0-and-the-audit-catalogue.md), owner decision D118 A). `go list -m all` lists one atoom version. `spike/` keeps its pins. The transport message is atoom's generic `Message{id, payload}` (B12). Its bytes are the same as before, so no flag, record or queue changes. `internal/audit.Lines` refuses an empty message with `message.id` and `message.payload`.
+- New: `session catalogue [--release V]` writes the payload of session's `AuditCatalogue`, the one item `default` with `release`, `policy`, `table` and `schemas`, made from the action table in `internal/audit`. The release defaults to the binary's version. The command refuses a release that is not a semantic version, and schemas that fail audit's schema policy. audit's writer quarantines every record of a project without a catalogue.
+- New: the committed catalogue `deploy/audit/audit-catalogue.json`, for the release 0.0.0, which covers every build before the first tag. `just catalogue` writes it, and `just check-catalogue` fails in the CI job `lint` while it is not what the table makes. Signing it as `AuditCatalogue` and publishing it to the writer's source as `audit-catalogue.jws` is the deployment's work, described in 0036.
+
 ### sluis v1 as an issuer
 
 - New, site file: an issuer entry's `client.par`, `required` (the default) or `unavailable` ([0033](docs/decisions/0033-sluis-v1-as-an-issuer.md), owner decisions D92 A and O2 A). With `unavailable` the sign-in at that issuer sends the authorization request on the browser's URL instead of by PAR; the callback's checks are the same (the binding cookie, the state once, the nonce, PKCE S256, RFC 9207 `iss`, the code redeemed with the client's `private_key_jwt` assertion). session refuses to start with `unavailable` when the issuer's discovery offers PAR, so the setting never turns PAR off where the issuer has it, and logs a warning at start for each issuer that signs in without it. Any other value is refused.

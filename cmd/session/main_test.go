@@ -188,3 +188,27 @@ func TestTheAuthorizerRunsOnLambdaOnly(t *testing.T) {
 		t.Fatalf("two sources: %v", err)
 	}
 }
+
+func TestTheCatalogueCommandWritesTheReleasesCatalogue(t *testing.T) {
+	var b bytes.Buffer
+	if err := catalogue([]string{"--release", audit.CatalogueRelease}, &b); err != nil {
+		t.Fatal(err)
+	}
+	want, err := audit.Catalogue(audit.CatalogueRelease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b.Bytes(), want) {
+		t.Fatal("the command's catalogue is not audit.Catalogue's")
+	}
+	b.Reset()
+	if err := catalogue(nil, &b); err != nil || !strings.Contains(b.String(), `"release": "`+version+`"`) {
+		t.Fatalf("the default release is not the binary's: %v", err)
+	}
+	if err := catalogue([]string{"--release", "v1.0.0"}, &b); err == nil {
+		t.Fatal("a release that is not a semantic version made a catalogue")
+	}
+	if err := catalogue([]string{"extra"}, &b); err == nil {
+		t.Fatal("an argument was taken")
+	}
+}
