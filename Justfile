@@ -8,9 +8,8 @@ envoy_image := "envoyproxy/envoy:v1.39.6@sha256:1fde8efee875e4e4f6a39a90fe49d933
 nginx_image := "nginx:1.30.8-alpine-slim@sha256:e9eaa7298465eab06d618c51556fdcf3fb5061f9ff40bd28ee898fbd7ee7f900"
 browser_image := "chromedp/headless-shell:157.0.8103.27@sha256:7bee201478b2f6266aae01243740ee85c16281e32f42d3aed9fdf04f4eace7a1"
 nats_image := "nats:2.15.2-alpine@sha256:afae2fdbe2e326c65e1246cb83b9d05d319188734f3bd577ac8072daae78a10f"
-# sluis v1, the issuer without PAR and with private_key_jwt (decision 0033). PLACEHOLDER: no sluis release has private_key_jwt yet.
-# Pin `ghcr.io/truvity/sluis/sluis:<that release>@sha256:<digest>` here when it is out; until then test-sluis-v1 says so and passes.
-sluis_v1_image := "PLACEHOLDER"
+# sluis v1, the issuer without PAR and with private_key_jwt (decision 0033): the first release with private_key_jwt is 1.88.0.
+sluis_v1_image := "ghcr.io/truvity/sluis/sluis:1.88.0@sha256:d716a3fadd75bf14af3c7bf5c891fd62f0c0a9b2973cf9a4540bd7c46ad83e55"
 dynamodb_image := "amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86"
 
 default:
