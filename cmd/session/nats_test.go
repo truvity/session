@@ -79,16 +79,16 @@ func TestTheSignInRecordLandsOnceOnNATS(t *testing.T) {
 	if got := raw.Header.Get("Atoom-Emitter"); got != audit.Emitter {
 		t.Fatalf("emitter %q", got)
 	}
-	var m transportv1.AuditMessage
+	var m transportv1.Message
 	if err := proto.Unmarshal(raw.Data, &m); err != nil {
 		t.Fatal(err)
 	}
 	var rec map[string]any
-	if err := json.Unmarshal(m.GetRecord(), &rec); err != nil {
+	if err := json.Unmarshal(m.GetPayload(), &rec); err != nil {
 		t.Fatal(err)
 	}
-	if md, _ := rec["metadata"].(map[string]any); md["event_code"] != "sign-in" || md["uid"] != m.GetUid() {
-		t.Fatalf("the record: %s", m.GetRecord())
+	if md, _ := rec["metadata"].(map[string]any); md["event_code"] != "sign-in" || md["uid"] != m.GetId() {
+		t.Fatalf("the record: %s", m.GetPayload())
 	}
 
 	// A retry of the same message, as the emitter makes one after an answer it did not get, is one message in the stream.
