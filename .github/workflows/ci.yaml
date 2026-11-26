@@ -18,6 +18,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Lint, and the check that the committed audit catalogue is the one the action table makes (decision 0036).
   lint:
     name: lint (Go, workflows)
     runs-on: ubuntu-24.04
@@ -27,7 +28,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: truvity/ci-actions/setup-devbox@82e404675ef3f826755e2939d1072cddcd07ed26 # v3.9.0
-      - run: devbox run -- just lint
+      - run: devbox run -- just lint check-catalogue
 
   # Build and the unit tests, with the race detector: no container, no network.
   test:

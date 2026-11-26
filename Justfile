@@ -17,11 +17,25 @@ default:
     @just --list
 
 # Everything CI runs.
-check: lint build test test-dynamodb test-nats test-keycloak test-sluis-v1 test-envoy test-nginx test-conformance vuln
+check: lint check-catalogue build test test-dynamodb test-nats test-keycloak test-sluis-v1 test-envoy test-nginx test-conformance vuln
 
 # Build every package. CGO is off: the binary is static.
 build:
     CGO_ENABLED=0 go build ./...
+
+# The committed catalogue (decision 0036): the payload of session's AuditCatalogue made from the action table in internal/audit,
+# for the release 0.0.0, which every build before the first tag is a pre-release of. Run it after a change to the table.
+catalogue:
+    go run ./cmd/session catalogue --release 0.0.0 > deploy/audit/audit-catalogue.json
+
+# Fails while the committed catalogue is not what the table makes.
+check-catalogue:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! go run ./cmd/session catalogue --release 0.0.0 | diff -u deploy/audit/audit-catalogue.json -; then
+        echo "::error file=deploy/audit/audit-catalogue.json::not what the action table makes: run 'just catalogue' and commit it"
+        exit 1
+    fi
 
 # The executables of the images for one architecture (decision 0028): dist/image/linux/<arch>/session, with its version, a
 # semantic version which `session version` prints and the audit records name; and beside it session-echo, the test backend of a

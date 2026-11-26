@@ -7,6 +7,7 @@
 //	              --audit-socket PATH|--audit-nats URL ...|--audit-sqs QUEUE_URL|--audit-stdout [flags]
 //	session authorizer --config-dir DIR|--source-appconfig APP/ENV/PROFILE --dynamodb-table NAME [...]   the API Gateway Lambda authorizer (a Lambda function only)
 //	session check --site FILE      validate a site file
+//	session catalogue [--release V]  the payload of session's AuditCatalogue, for the release V (this binary's by default)
 //	session version
 package main
 
@@ -69,6 +70,8 @@ func main() {
 		err = authorizer(os.Args[2:])
 	case "check":
 		err = check(os.Args[2:])
+	case "catalogue":
+		err = catalogue(os.Args[2:], os.Stdout)
 	case "version", "--version":
 		fmt.Println(version)
 	default:
@@ -81,7 +84,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: session serve|authorizer|check|version (session <command> -h for its flags)")
+	fmt.Fprintln(os.Stderr, "usage: session serve|authorizer|check|catalogue|version (session <command> -h for its flags)")
 	os.Exit(2)
 }
 
@@ -98,6 +101,23 @@ func check(args []string) error {
 	}
 	fmt.Println("site file ok")
 	return nil
+}
+
+// catalogue writes the payload of session's AuditCatalogue document to w (decision 0036): the action table and its schemas for
+// one release, which the deployment signs as the kind AuditCatalogue and gives the writer of its environment.
+func catalogue(args []string, w io.Writer) error {
+	fs := flag.NewFlagSet("catalogue", flag.ExitOnError)
+	release := fs.String("release", version, "the newest release the catalogue covers, a semantic version")
+	_ = fs.Parse(args)
+	if fs.NArg() != 0 {
+		return fmt.Errorf("catalogue: unexpected arguments %q", fs.Args())
+	}
+	b, err := audit.Catalogue(*release)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(b)
+	return err
 }
 
 type serveFlags struct {

@@ -1,0 +1,194 @@
+{
+  "default": {
+    "release": "0.0.0",
+    "policy": 1,
+    "table": {
+      "ocsf": "1.9.0",
+      "product": "session",
+      "actions": [
+        {
+          "name": "sign-in",
+          "actor": "session",
+          "class": 3002,
+          "activities": [
+            {
+              "id": 1
+            }
+          ],
+          "outcomes": [
+            "success",
+            "failure"
+          ],
+          "subject": "optional",
+          "fields": {
+            "issuer": {
+              "type": "text"
+            },
+            "site": {
+              "type": "text",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "logout",
+          "actor": "session",
+          "class": 3002,
+          "activities": [
+            {
+              "id": 2
+            }
+          ],
+          "outcomes": [
+            "success"
+          ],
+          "subject": "required",
+          "fields": {
+            "issuer": {
+              "type": "text"
+            },
+            "site": {
+              "type": "text",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "back-channel-logout",
+          "actor": "session",
+          "class": 3002,
+          "activities": [
+            {
+              "id": 2
+            }
+          ],
+          "outcomes": [
+            "success",
+            "failure"
+          ],
+          "subject": "optional",
+          "fields": {
+            "issuer": {
+              "type": "text"
+            },
+            "site": {
+              "type": "text",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "denied",
+          "actor": "session",
+          "class": 6003,
+          "activities": [
+            {
+              "id": 99,
+              "name": "Check"
+            }
+          ],
+          "outcomes": [
+            "failure"
+          ],
+          "subject": "optional",
+          "policy": "optional",
+          "fields": {
+            "issuer": {
+              "type": "text"
+            },
+            "route": {
+              "type": "text"
+            },
+            "site": {
+              "type": "text",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "token-exchange",
+          "actor": "session",
+          "class": 3002,
+          "activities": [
+            {
+              "id": 99,
+              "name": "Token Exchange"
+            }
+          ],
+          "outcomes": [
+            "success",
+            "failure"
+          ],
+          "subject": "required",
+          "fields": {
+            "audience": {
+              "type": "text",
+              "required": true
+            },
+            "issuer": {
+              "type": "text"
+            },
+            "site": {
+              "type": "text",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "refresh",
+          "actor": "session",
+          "class": 3002,
+          "activities": [
+            {
+              "id": 99,
+              "name": "Refresh"
+            }
+          ],
+          "outcomes": [
+            "failure"
+          ],
+          "subject": "required",
+          "fields": {
+            "issuer": {
+              "type": "text"
+            },
+            "site": {
+              "type": "text",
+              "required": true
+            }
+          }
+        }
+      ]
+    },
+    "schemas": [
+      {
+        "name": "back-channel-logout.schema.json",
+        "json": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"properties\": {\n    \"activity_id\": {\n      \"enum\": [\n        2\n      ]\n    },\n    \"class_uid\": {\n      \"const\": 3002\n    },\n    \"metadata\": {\n      \"properties\": {\n        \"event_code\": {\n          \"const\": \"back-channel-logout\"\n        },\n        \"product\": {\n          \"properties\": {\n            \"name\": {\n              \"const\": \"session\"\n            },\n            \"version\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"name\",\n            \"version\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"event_code\",\n        \"product\"\n      ],\n      \"type\": \"object\"\n    },\n    \"status_code\": {\n      \"$ref\": \"defs.schema.json#/$defs/reason\"\n    },\n    \"status_id\": {\n      \"enum\": [\n        1,\n        2\n      ]\n    },\n    \"unmapped\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"session\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"issuer\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            },\n            \"lost\": {\n              \"$ref\": \"defs.schema.json#/$defs/lost\"\n            },\n            \"site\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"site\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"session\"\n      ],\n      \"type\": \"object\"\n    },\n    \"user\": {\n      \"properties\": {\n        \"uid\": {\n          \"$ref\": \"defs.schema.json#/$defs/user_uid\"\n        }\n      },\n      \"required\": [\n        \"uid\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"metadata\",\n    \"class_uid\",\n    \"activity_id\",\n    \"status_id\",\n    \"unmapped\",\n    \"user\"\n  ],\n  \"title\": \"session back-channel-logout\",\n  \"type\": \"object\"\n}\n"
+      },
+      {
+        "name": "defs.schema.json",
+        "json": "{\n  \"$defs\": {\n    \"hex96\": {\n      \"pattern\": \"^[0-9a-f]{96}$\",\n      \"type\": \"string\"\n    },\n    \"lost\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"process\": {\n          \"pattern\": \"^[0-9a-f]{16}$\",\n          \"type\": \"string\"\n        },\n        \"since\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        \"total\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 1,\n          \"type\": \"integer\"\n        }\n      },\n      \"required\": [\n        \"process\",\n        \"since\",\n        \"total\"\n      ],\n      \"type\": \"object\"\n    },\n    \"pseudonym\": {\n      \"pattern\": \"^p1\\\\.[0-9]{6}\\\\.[A-Za-z0-9_\\\\-]{22}$\",\n      \"type\": \"string\"\n    },\n    \"reason\": {\n      \"pattern\": \"^[A-Za-z][A-Za-z0-9_.:\\\\-]{0,63}$\",\n      \"type\": \"string\"\n    },\n    \"text\": {\n      \"maxLength\": 1024,\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"user_uid\": {\n      \"pattern\": \"^(unknown|p1\\\\.[0-9]{6}\\\\.[A-Za-z0-9_\\\\-]{22})$\",\n      \"type\": \"string\"\n    }\n  },\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\"\n}\n"
+      },
+      {
+        "name": "denied.schema.json",
+        "json": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"properties\": {\n    \"activity_id\": {\n      \"enum\": [\n        99\n      ]\n    },\n    \"class_uid\": {\n      \"const\": 6003\n    },\n    \"metadata\": {\n      \"properties\": {\n        \"event_code\": {\n          \"const\": \"denied\"\n        },\n        \"product\": {\n          \"properties\": {\n            \"name\": {\n              \"const\": \"session\"\n            },\n            \"version\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"name\",\n            \"version\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"event_code\",\n        \"product\"\n      ],\n      \"type\": \"object\"\n    },\n    \"policy\": {\n      \"properties\": {\n        \"uid\": {\n          \"$ref\": \"defs.schema.json#/$defs/text\"\n        },\n        \"version\": {\n          \"$ref\": \"defs.schema.json#/$defs/hex96\"\n        }\n      },\n      \"required\": [\n        \"uid\"\n      ],\n      \"type\": \"object\"\n    },\n    \"resources\": {\n      \"items\": {\n        \"properties\": {\n          \"type\": {\n            \"const\": \"person\"\n          },\n          \"uid\": {\n            \"$ref\": \"defs.schema.json#/$defs/pseudonym\"\n          }\n        },\n        \"required\": [\n          \"type\",\n          \"uid\"\n        ],\n        \"type\": \"object\"\n      },\n      \"maxItems\": 1,\n      \"type\": \"array\"\n    },\n    \"status_code\": {\n      \"$ref\": \"defs.schema.json#/$defs/reason\"\n    },\n    \"status_id\": {\n      \"enum\": [\n        2\n      ]\n    },\n    \"unmapped\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"session\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"issuer\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            },\n            \"lost\": {\n              \"$ref\": \"defs.schema.json#/$defs/lost\"\n            },\n            \"route\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            },\n            \"site\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"site\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"session\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"metadata\",\n    \"class_uid\",\n    \"activity_id\",\n    \"status_id\",\n    \"unmapped\"\n  ],\n  \"title\": \"session denied\",\n  \"type\": \"object\"\n}\n"
+      },
+      {
+        "name": "logout.schema.json",
+        "json": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"properties\": {\n    \"activity_id\": {\n      \"enum\": [\n        2\n      ]\n    },\n    \"class_uid\": {\n      \"const\": 3002\n    },\n    \"metadata\": {\n      \"properties\": {\n        \"event_code\": {\n          \"const\": \"logout\"\n        },\n        \"product\": {\n          \"properties\": {\n            \"name\": {\n              \"const\": \"session\"\n            },\n            \"version\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"name\",\n            \"version\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"event_code\",\n        \"product\"\n      ],\n      \"type\": \"object\"\n    },\n    \"status_code\": {\n      \"$ref\": \"defs.schema.json#/$defs/reason\"\n    },\n    \"status_id\": {\n      \"enum\": [\n        1\n      ]\n    },\n    \"unmapped\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"session\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"issuer\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            },\n            \"lost\": {\n              \"$ref\": \"defs.schema.json#/$defs/lost\"\n            },\n            \"site\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"site\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"session\"\n      ],\n      \"type\": \"object\"\n    },\n    \"user\": {\n      \"properties\": {\n        \"uid\": {\n          \"$ref\": \"defs.schema.json#/$defs/user_uid\"\n        }\n      },\n      \"required\": [\n        \"uid\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"metadata\",\n    \"class_uid\",\n    \"activity_id\",\n    \"status_id\",\n    \"unmapped\",\n    \"user\"\n  ],\n  \"title\": \"session logout\",\n  \"type\": \"object\"\n}\n"
+      },
+      {
+        "name": "refresh.schema.json",
+        "json": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"properties\": {\n    \"activity_id\": {\n      \"enum\": [\n        99\n      ]\n    },\n    \"class_uid\": {\n      \"const\": 3002\n    },\n    \"metadata\": {\n      \"properties\": {\n        \"event_code\": {\n          \"const\": \"refresh\"\n        },\n        \"product\": {\n          \"properties\": {\n            \"name\": {\n              \"const\": \"session\"\n            },\n            \"version\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"name\",\n            \"version\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"event_code\",\n        \"product\"\n      ],\n      \"type\": \"object\"\n    },\n    \"status_code\": {\n      \"$ref\": \"defs.schema.json#/$defs/reason\"\n    },\n    \"status_id\": {\n      \"enum\": [\n        2\n      ]\n    },\n    \"unmapped\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"session\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"issuer\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            },\n            \"lost\": {\n              \"$ref\": \"defs.schema.json#/$defs/lost\"\n            },\n            \"site\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"site\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"session\"\n      ],\n      \"type\": \"object\"\n    },\n    \"user\": {\n      \"properties\": {\n        \"uid\": {\n          \"$ref\": \"defs.schema.json#/$defs/user_uid\"\n        }\n      },\n      \"required\": [\n        \"uid\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"metadata\",\n    \"class_uid\",\n    \"activity_id\",\n    \"status_id\",\n    \"unmapped\",\n    \"user\"\n  ],\n  \"title\": \"session refresh\",\n  \"type\": \"object\"\n}\n"
+      },
+      {
+        "name": "sign-in.schema.json",
+        "json": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"properties\": {\n    \"activity_id\": {\n      \"enum\": [\n        1\n      ]\n    },\n    \"class_uid\": {\n      \"const\": 3002\n    },\n    \"metadata\": {\n      \"properties\": {\n        \"event_code\": {\n          \"const\": \"sign-in\"\n        },\n        \"product\": {\n          \"properties\": {\n            \"name\": {\n              \"const\": \"session\"\n            },\n            \"version\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"name\",\n            \"version\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"event_code\",\n        \"product\"\n      ],\n      \"type\": \"object\"\n    },\n    \"status_code\": {\n      \"$ref\": \"defs.schema.json#/$defs/reason\"\n    },\n    \"status_id\": {\n      \"enum\": [\n        1,\n        2\n      ]\n    },\n    \"unmapped\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"session\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"issuer\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            },\n            \"lost\": {\n              \"$ref\": \"defs.schema.json#/$defs/lost\"\n            },\n            \"site\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"site\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"session\"\n      ],\n      \"type\": \"object\"\n    },\n    \"user\": {\n      \"properties\": {\n        \"uid\": {\n          \"$ref\": \"defs.schema.json#/$defs/user_uid\"\n        }\n      },\n      \"required\": [\n        \"uid\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"metadata\",\n    \"class_uid\",\n    \"activity_id\",\n    \"status_id\",\n    \"unmapped\",\n    \"user\"\n  ],\n  \"title\": \"session sign-in\",\n  \"type\": \"object\"\n}\n"
+      },
+      {
+        "name": "token-exchange.schema.json",
+        "json": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"properties\": {\n    \"activity_id\": {\n      \"enum\": [\n        99\n      ]\n    },\n    \"class_uid\": {\n      \"const\": 3002\n    },\n    \"metadata\": {\n      \"properties\": {\n        \"event_code\": {\n          \"const\": \"token-exchange\"\n        },\n        \"product\": {\n          \"properties\": {\n            \"name\": {\n              \"const\": \"session\"\n            },\n            \"version\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"name\",\n            \"version\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"event_code\",\n        \"product\"\n      ],\n      \"type\": \"object\"\n    },\n    \"status_code\": {\n      \"$ref\": \"defs.schema.json#/$defs/reason\"\n    },\n    \"status_id\": {\n      \"enum\": [\n        1,\n        2\n      ]\n    },\n    \"unmapped\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"session\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"audience\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            },\n            \"issuer\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            },\n            \"lost\": {\n              \"$ref\": \"defs.schema.json#/$defs/lost\"\n            },\n            \"site\": {\n              \"$ref\": \"defs.schema.json#/$defs/text\"\n            }\n          },\n          \"required\": [\n            \"audience\",\n            \"site\"\n          ],\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"session\"\n      ],\n      \"type\": \"object\"\n    },\n    \"user\": {\n      \"properties\": {\n        \"uid\": {\n          \"$ref\": \"defs.schema.json#/$defs/user_uid\"\n        }\n      },\n      \"required\": [\n        \"uid\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"metadata\",\n    \"class_uid\",\n    \"activity_id\",\n    \"status_id\",\n    \"unmapped\",\n    \"user\"\n  ],\n  \"title\": \"session token-exchange\",\n  \"type\": \"object\"\n}\n"
+      }
+    ]
+  }
+}

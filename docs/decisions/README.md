@@ -39,6 +39,7 @@ Each record stands alone: status and date, context, decision, consequences and r
 | [0032](0032-atoom-0.8.0-transports-and-the-appconfig-source.md) | atoom 0.8.0: the audit transports NATS and SQS, and the AppConfig source |
 | [0033](0033-sluis-v1-as-an-issuer.md) | sluis v1 as an issuer: the gaps, and what session and sluis v1 each change (partly supersedes 0005 and 0025) |
 | [0034](0034-several-issuers-per-site.md) | Several issuers per site: the sign-in page, a flow per issuer, and the session's own issuer for everything after |
+| [0036](0036-atoom-0.9.0-and-the-audit-catalogue.md) | atoom 0.9.0, audit 0.21.0, and session's AuditCatalogue: the form, the names and where it lives (0035 is the open `idp` claim) |
 
 ## How the records are kept
 
