@@ -20,8 +20,9 @@ func Socket(path string) transportv1alpha1connect.TransportServiceClient {
 	return transportv1alpha1connect.NewTransportServiceClient(socket.Client(path), "http://transport", call.ClientOptions()...)
 }
 
-// Lines is a transport driver in this process for a run without a writer (development and the tests): it writes the record of
-// each message, canonical JSON, as one line to w, and serves nothing to a consumer. A write that fails is an emit that failed.
+// Lines is a transport driver in this process for a run without a writer (development and the tests): it writes the payload of
+// each message, which audit's emitter makes the bare record in canonical JSON, as one line to w, and serves nothing to a consumer.
+// A write that fails is an emit that failed.
 type Lines struct {
 	transportv1alpha1connect.UnimplementedTransportServiceHandler
 	mu sync.Mutex
@@ -37,14 +38,14 @@ func (l *Lines) Emit(_ context.Context, req *connect.Request[transportv1.EmitReq
 	switch {
 	case m == nil:
 		return nil, refusal.New(connect.CodeInvalidArgument, "schema", "message")
-	case m.GetUid() == "":
-		return nil, refusal.New(connect.CodeInvalidArgument, "schema", "message.uid")
-	case len(m.GetRecord()) == 0:
-		return nil, refusal.New(connect.CodeInvalidArgument, "schema", "message.record")
+	case m.GetId() == "":
+		return nil, refusal.New(connect.CodeInvalidArgument, "schema", "message.id")
+	case len(m.GetPayload()) == 0:
+		return nil, refusal.New(connect.CodeInvalidArgument, "schema", "message.payload")
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if _, err := l.w.Write(append(append([]byte(nil), m.GetRecord()...), '\n')); err != nil {
+	if _, err := l.w.Write(append(append([]byte(nil), m.GetPayload()...), '\n')); err != nil {
 		return nil, refusal.New(connect.CodeUnavailable, "engine", "")
 	}
 	return connect.NewResponse(&transportv1.EmitResponse{}), nil
