@@ -1,9 +1,11 @@
 # Changelog
 
-What changed in session, newest first. session has no release yet; each entry names the pull request's step of the
+What changed in session, newest first. Each entry names the pull request's step of the
 [plan](docs/design.md#16-status-and-next-steps).
 
-## Unreleased
+## v0.1.0 - 2026-11-27
+
+The first release: the version the first site runs. The demo site on devel (`session-demo.devel.truvity.xyz`, issuer Keycloak's `staff-truvity`) passes the remote conformance suite (`just test-remote`), which was the tag's done-line ([0025](docs/decisions/0025-first-version-for-the-first-sites.md), [0028](docs/decisions/0028-the-image.md), owner D80 A). The image is `ghcr.io/truvity/session:0.1.0`.
 
 ### The claim `idp`
 
